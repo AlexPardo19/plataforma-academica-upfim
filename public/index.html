@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agenda UPFIM · Gestión Académica, Rachas y Chat Inteligente</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <!-- Barra de estado de conexión (Causa #3 Ishikawa) -->
+  <div id="network-banner" class="network-banner hidden" role="status">
+    Sin conexión a internet. Algunas funciones en línea (asistente y sincronización) requieren conectividad.
+  </div>
+
+  <!-- Barra Superior Persistente -->
+  <header id="topbar" class="topbar hidden">
+    <div class="topbar-left">
+      <div class="brand">
+        <span class="brand-logo" aria-hidden="true">🎓</span>
+        <div>
+          <span class="brand-title">Agenda UPFIM</span>
+          <span class="brand-sub" id="user-role-badge">Plataforma Académica</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="topbar-right">
+      <!-- Contador de tareas pendientes (HU-26, solo Estudiante) -->
+      <button id="pending-counter-pill" class="pill-btn hidden" title="Tareas pendientes por entregar">
+        📋 Pendientes <span id="pending-badge" class="badge neutral">0</span>
+      </button>
+
+      <!-- Widget de Racha Activa (HU-31, solo Estudiante) -->
+      <div id="streak-widget-wrap" class="streak-wrap hidden">
+        <button id="streak-pill-btn" class="streak-pill" title="Ver detalle y personalizar racha">
+          <span id="streak-pill-icon" class="streak-flame">🔥</span>
+          <span id="streak-pill-text">0 Días</span>
+          <span id="streak-pill-pts" class="streak-pts">0 pts</span>
+        </button>
+        <div id="streak-popover" class="streak-popover hidden" role="dialog" aria-label="Detalle de racha">
+          <div class="popover-head">
+            <strong id="popover-theme-name">Llama Clásica</strong>
+            <span id="popover-theme-badge" class="chip-mini">Constancia Base</span>
+          </div>
+          <div class="streak-stats-grid">
+            <div>
+              <small>Racha actual</small>
+              <strong id="pop-streak-days">0 días</strong>
+            </div>
+            <div>
+              <small>Mejor racha</small>
+              <strong id="pop-best-streak">0 días</strong>
+            </div>
+            <div>
+              <small>Puntos</small>
+              <strong id="pop-streak-points">0 pts</strong>
+            </div>
+          </div>
+          <p class="popover-hint">Ingresa cada día y entrega tareas a tiempo para sumar días y puntos.</p>
+          <button id="open-streak-customizer-btn" class="btn primary full">Personalizar Racha</button>
+        </div>
+      </div>
+
+      <!-- Icono Chat Privado con Badge de No Leídos (HU-49) -->
+      <button id="open-chat-btn" class="icon-pill-btn" title="Chat privado Docente – Alumno">
+        💬 <span class="hide-sm">Mensajes</span>
+        <span id="chat-unread-badge" class="badge danger hidden">0</span>
+      </button>
+
+      <!-- Botón Tutorial (HU-10) -->
+      <button id="open-tutorial-btn" class="icon-pill-btn" title="Ver tutorial de uso">
+        ❔ <span class="hide-sm">Ver tutorial</span>
+      </button>
+
+      <!-- Perfil (HU-05) -->
+      <button id="open-profile-btn" class="user-btn" title="Configurar perfil">
+        <span id="user-avatar-chip" class="avatar-chip">U</span>
+        <span id="user-name-label" class="hide-sm">Usuario</span>
+      </button>
+
+      <!-- Cerrar Sesión (HU-02) -->
+      <button id="logout-btn" class="btn ghost small" title="Cerrar sesión">Salir</button>
+    </div>
+  </header>
+
+  <!-- Vista de Autenticación -->
+  <main id="auth-view" class="auth-shell">
+    <section class="auth-hero">
+      <div class="hero-tag">UPFIM · 7TIDG2 · Plataforma Académica Desambiguada</div>
+      <h1>Organiza tu semana escolar, mantén tu racha y chatea con tu asistente.</h1>
+      <p>
+        Registra tareas por materia, prioridad y fecha límite en horario local, recibe recordatorios internos
+        oportunos y consulta a tus docentes en tiempo real.
+      </p>
+      <div class="demo-box">
+        <strong>Acceso rápido de demostración (contraseña: <code>Demo1234!</code>)</strong>
+        <div class="demo-actions">
+          <button type="button" id="demo-student-btn" class="btn primary">Entrar como Estudiante</button>
+          <button type="button" id="demo-teacher-btn" class="btn secondary">Entrar como Docente</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="auth-card">
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab-btn active" data-auth-tab="login">Iniciar Sesión</button>
+        <button type="button" class="tab-btn" data-auth-tab="register">Crear Cuenta</button>
+        <button type="button" class="tab-btn" data-auth-tab="recover">Recuperar Clave</button>
+      </div>
+
+      <div id="auth-alert" class="alert hidden" role="alert"></div>
+
+      <!-- Formulario Login -->
+      <form id="login-form" class="auth-form">
+        <label>
+          Correo institucional o personal
+          <input type="email" id="login-email" required placeholder="estudiante@upfim.edu.mx" />
+        </label>
+        <label>
+          Contraseña
+          <input type="password" id="login-password" required placeholder="••••••••" />
+        </label>
+        <button type="submit" class="btn primary full">Iniciar sesión</button>
+      </form>
+
+      <!-- Formulario Registro -->
+      <form id="register-form" class="auth-form hidden">
+        <label>
+          Nombre completo
+          <input type="text" id="reg-name" required placeholder="Ej. Ana Laura Ramírez" />
+        </label>
+        <label>
+          Correo electrónico
+          <input type="email" id="reg-email" required placeholder="nombre@upfim.edu.mx" />
+        </label>
+        <label>
+          Contraseña (mín. 6 caracteres)
+          <input type="password" id="reg-password" required minlength="6" placeholder="••••••••" />
+        </label>
+        <div class="form-row-2">
+          <label>
+            Rol en la plataforma
+            <select id="reg-role">
+              <option value="student">Estudiante</option>
+              <option value="teacher">Docente</option>
+            </select>
+          </label>
+          <label id="reg-group-wrap">
+            Grupo académico
+            <select id="reg-group"></select>
+          </label>
+        </div>
+        <button type="submit" class="btn primary full">Crear cuenta e iniciar</button>
+      </form>
+
+      <!-- Formulario Recuperación (HU-04) -->
+      <div id="recover-panel" class="auth-form hidden">
+        <form id="forgot-form" class="stack-sm">
+          <label>
+            Ingresa tu correo registrado
+            <input type="email" id="forgot-email" required placeholder="estudiante@upfim.edu.mx" />
+          </label>
+          <button type="submit" class="btn secondary full">Enviar enlace de recuperación</button>
+        </form>
+
+        <div id="demo-inbox-box" class="demo-inbox hidden">
+          <strong>Bandeja local segura (sin correo externo):</strong>
+          <p id="demo-inbox-note"></p>
+          <code id="demo-reset-token"></code>
+        </div>
+
+        <form id="reset-form" class="stack-sm">
+          <label>
+            Token de recuperación
+            <input type="text" id="reset-token-input" required placeholder="Pega aquí el token recibido" />
+          </label>
+          <label>
+            Nueva contraseña
+            <input type="password" id="reset-new-password" required minlength="6" placeholder="Mínimo 6 caracteres" />
+          </label>
+          <button type="submit" class="btn primary full">Restablecer contraseña</button>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <!-- Dashboard Principal Estudiante -->
+  <main id="student-view" class="app-shell hidden">
+    <section class="student-toolbar card">
+      <div class="toolbar-top">
+        <div>
+          <h2>Mi Agenda Académica</h2>
+          <p class="muted" id="student-group-subtitle">Grupo asignado</p>
+        </div>
+        <div class="toolbar-primary-actions">
+          <div class="view-switcher" role="group" aria-label="Modo de visualización">
+            <button type="button" class="switch-btn active" data-view-mode="weekly">Vista Semanal</button>
+            <button type="button" class="switch-btn" data-view-mode="daily">Vista Diaria</button>
+            <button type="button" class="switch-btn" data-view-mode="history">Historial</button>
+          </div>
+          <button type="button" id="new-task-btn" class="btn primary">+ Nueva Tarea</button>
+        </div>
+      </div>
+
+      <div class="toolbar-filters">
+        <div class="search-box">
+          <span aria-hidden="true">🔍</span>
+          <input type="text" id="task-search-input" placeholder="Buscar tarea por palabra clave..." />
+          <button type="button" id="clear-search-btn" class="clear-x hidden" title="Limpiar búsqueda">✕</button>
+        </div>
+
+        <select id="subject-filter-select" aria-label="Filtrar por materia">
+          <option value="ALL">Todas las materias</option>
+        </select>
+
+        <select id="sort-select" aria-label="Ordenar tareas">
+          <option value="due_at">Ordenar: Fecha de vencimiento</option>
+          <option value="priority">Ordenar: Por Prioridad</option>
+        </select>
+
+        <div id="week-nav" class="week-nav">
+          <button type="button" id="prev-week-btn" class="btn ghost small">◀ Semana ant.</button>
+          <span id="week-range-label" class="week-label">Semana actual</span>
+          <button type="button" id="today-week-btn" class="btn ghost small">Hoy</button>
+          <button type="button" id="next-week-btn" class="btn ghost small">Semana sig. ▶</button>
+        </div>
+
+        <div id="history-month-wrap" class="hidden">
+          <input type="month" id="history-month-input" aria-label="Filtrar historial por mes" />
+        </div>
+      </div>
+    </section>
+
+    <div class="student-layout">
+      <!-- Contenido principal: Tablero Semanal / Vista Diaria / Historial -->
+      <section id="tasks-container" class="tasks-stage"></section>
+
+      <!-- Panel lateral compacto: Temporizador de Concentración Pomodoro (Causa #9 Ishikawa) -->
+      <aside class="focus-panel card">
+        <div class="panel-head">
+          <h3>⏱️ Enfoque Pomodoro</h3>
+          <span class="chip-mini">Sin deriva</span>
+        </div>
+        <p id="timer-task-label" class="muted small-text">Selecciona "Enfocar" en una tarea o inicia un bloque libre.</p>
+        <div class="timer-display" id="timer-display">25:00</div>
+        <div class="timer-presets">
+          <button type="button" class="btn ghost small" data-timer-mins="25">25m Estudio</button>
+          <button type="button" class="btn ghost small" data-timer-mins="5">5m Pausa</button>
+          <button type="button" class="btn ghost small" data-timer-mins="45">45m Profundo</button>
+        </div>
+        <div class="timer-controls">
+          <button type="button" id="timer-start-btn" class="btn primary full">Iniciar</button>
+          <button type="button" id="timer-pause-btn" class="btn secondary hidden">Pausar</button>
+          <button type="button" id="timer-reset-btn" class="btn ghost">Reiniciar</button>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <!-- Portal Docente de Exclusiva Consulta (HU-43..HU-46) -->
+  <main id="teacher-view" class="app-shell hidden">
+    <section class="teacher-banner card">
+      <div>
+        <h2>Portal Docente — Supervisión Académica</h2>
+        <p class="muted">
+          Portal de consulta y orientación personalizada: permite revisar tareas registradas por grupo, materias,
+          horario del cuatrimestre y abrir chat privado con estudiantes. <strong>No incluye asignación de tareas ni captura de calificaciones (HU-46).</strong>
+        </p>
+      </div>
+      <div class="tabs compact" role="tablist">
+        <button type="button" class="tab-btn active" data-teacher-tab="groups">Supervisión por Grupo</button>
+        <button type="button" class="tab-btn" data-teacher-tab="subjects">Mis Materias</button>
+        <button type="button" class="tab-btn" data-teacher-tab="schedule">Mi Horario</button>
+      </div>
+    </section>
+
+    <section id="teacher-groups-tab" class="teacher-tab-panel"></section>
+    <section id="teacher-subjects-tab" class="teacher-tab-panel hidden"></section>
+    <section id="teacher-schedule-tab" class="teacher-tab-panel hidden"></section>
+  </main>
+
+  <!-- Notificaciones flotantes internas (HU-25, HU-27, HU-28) -->
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+
+  <!-- Ventana flotante minimizable del Asistente Inteligente (HU-38..HU-42) -->
+  <div id="assistant-shell" class="assistant-shell hidden">
+    <button id="assistant-fab" class="assistant-fab" title="Abrir Asistente Académico Inteligente">
+      🤖 <span>Asistente IA</span>
+    </button>
+
+    <section id="assistant-window" class="assistant-window hidden" aria-label="Asistente Virtual Inteligente">
+      <header class="assistant-header">
+        <div>
+          <strong>🤖 Asistente Académico</strong>
+          <small>Organización y uso del sitio</small>
+        </div>
+        <div class="assistant-head-actions">
+          <button type="button" id="assistant-clear-btn" class="icon-mini" title="Vaciar conversación">🗑️</button>
+          <button type="button" id="assistant-min-btn" class="icon-mini" title="Minimizar">➖</button>
+        </div>
+      </header>
+      <div id="assistant-messages" class="assistant-messages"></div>
+      <div class="assistant-quick">
+        <button type="button" class="quick-chip" data-quick-ask="¿Cómo me organizo con mis tareas pendientes?">Organizar mis tareas</button>
+        <button type="button" class="quick-chip" data-quick-ask="¿Por cuál tarea debo empezar hoy?">¿Por cuál empiezo?</button>
+        <button type="button" class="quick-chip" data-quick-ask="¿Cómo puedo filtrar las tareas por materia?">¿Cómo filtrar?</button>
+      </div>
+      <form id="assistant-form" class="assistant-form">
+        <input type="text" id="assistant-input" placeholder="Pregunta cómo organizarte..." required />
+        <button type="submit" class="btn primary small">Enviar</button>
+      </form>
+    </section>
+  </div>
+
+  <!-- ================================================================== -->
+  <!-- MODALES                                                            -->
+  <!-- ================================================================== -->
+
+  <!-- Modal Crear / Editar Tarea (HU-11, HU-12, HU-17, HU-18) -->
+  <div id="task-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <header class="modal-header">
+        <h3 id="task-modal-title">Nueva Tarea Académica</h3>
+        <button type="button" class="close-modal" data-close-modal="task-modal">✕</button>
+      </header>
+      <form id="task-form" class="stack-md">
+        <input type="hidden" id="task-edit-id" />
+        <div id="task-form-error" class="alert error hidden"></div>
+        <label>
+          Título de la actividad *
+          <input type="text" id="task-title-input" placeholder="Ej. Reporte de arquitectura cloud" />
+        </label>
+        <div class="form-row-2">
+          <label>
+            Asignatura / Materia *
+            <input type="text" id="task-subject-input" list="subject-suggestions" placeholder="Ej. Ingeniería de Software" />
+            <datalist id="subject-suggestions"></datalist>
+          </label>
+          <label>
+            Color de etiqueta
+            <input type="color" id="task-color-input" value="#4f46e5" />
+          </label>
+        </div>
+        <div class="form-row-2">
+          <label>
+            Fecha y hora límite *
+            <input type="datetime-local" id="task-due-input" />
+          </label>
+          <label>
+            Prioridad
+            <select id="task-priority-input">
+              <option value="high">Alta (30 pts)</option>
+              <option value="medium" selected>Media (20 pts)</option>
+              <option value="low">Baja (10 pts)</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          Notas / Observaciones
+          <textarea id="task-desc-input" rows="3" placeholder="Enlaces, indicaciones o material de apoyo..."></textarea>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" data-close-modal="task-modal">Cancelar</button>
+          <button type="submit" class="btn primary">Guardar tarea</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Confirmación de Eliminación (HU-14) -->
+  <div id="delete-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card narrow">
+      <header class="modal-header">
+        <h3>Confirmar eliminación</h3>
+        <button type="button" class="close-modal" data-close-modal="delete-modal">✕</button>
+      </header>
+      <p>¿Deseas eliminar permanentemente la tarea <strong id="delete-task-name"></strong>? Esta acción no se puede deshacer.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" data-close-modal="delete-modal">Cancelar</button>
+        <button type="button" id="confirm-delete-btn" class="btn danger">Aceptar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Personalizar Racha (HU-34..HU-37) -->
+  <div id="streak-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card wide">
+      <header class="modal-header">
+        <h3>Personalizar Diseño de Racha</h3>
+        <button type="button" class="close-modal" data-close-modal="streak-modal">✕</button>
+      </header>
+      <div class="streak-preview-box">
+        <small>Previsualización en vivo:</small>
+        <div id="streak-live-preview" class="streak-preview-pill">🔥 7 Días · 140 pts</div>
+      </div>
+      <div id="streak-theme-alert" class="alert hidden"></div>
+      <div id="streak-themes-grid" class="themes-grid"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" data-close-modal="streak-modal">Cancelar</button>
+        <button type="button" id="save-streak-theme-btn" class="btn primary">Guardar diseño</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Chat Privado Docente – Alumno (HU-47..HU-50) -->
+  <div id="chat-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card chat-modal-card">
+      <header class="modal-header">
+        <div>
+          <h3>Chat Privado Académico</h3>
+          <small class="muted">Mensajería directa exclusivamente por texto plano (sin archivos ni video)</small>
+        </div>
+        <button type="button" class="close-modal" data-close-modal="chat-modal">✕</button>
+      </header>
+      <div class="chat-layout">
+        <aside id="chat-contacts-list" class="chat-contacts"></aside>
+        <section class="chat-thread-area">
+          <div id="chat-active-header" class="chat-thread-head">Selecciona una persona para conversar</div>
+          <div id="chat-messages-box" class="chat-messages-box"></div>
+          <form id="chat-send-form" class="chat-send-form">
+            <input type="text" id="chat-text-input" placeholder="Escribe un mensaje de texto..." disabled maxlength="2000" />
+            <button type="submit" id="chat-send-btn" class="btn primary" disabled>Enviar</button>
+          </form>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Perfil de Usuario (HU-05) -->
+  <div id="profile-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <header class="modal-header">
+        <h3>Configuración de Perfil</h3>
+        <button type="button" class="close-modal" data-close-modal="profile-modal">✕</button>
+      </header>
+      <form id="profile-form" class="stack-md">
+        <div id="profile-alert" class="alert hidden"></div>
+        <label>
+          Nombre completo
+          <input type="text" id="prof-name" required />
+        </label>
+        <label>
+          Correo electrónico
+          <input type="email" id="prof-email" required />
+        </label>
+        <label>
+          URL de foto de perfil (opcional)
+          <input type="url" id="prof-avatar" placeholder="https://..." />
+        </label>
+        <label id="prof-group-wrap">
+          Grupo asignado
+          <select id="prof-group"></select>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" data-close-modal="profile-modal">Cancelar</button>
+          <button type="submit" class="btn primary">Guardar cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Tutorial Interactivo Emergente (HU-07..HU-10) -->
+  <div id="tutorial-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card tutorial-card">
+      <header class="modal-header">
+        <span id="tutorial-step-badge" class="chip-mini">Paso 1 de 4</span>
+        <button type="button" id="tutorial-skip-x" class="close-modal" title="Omitir tutorial">✕</button>
+      </header>
+      <div class="tutorial-body">
+        <div id="tutorial-icon" class="tutorial-icon">📅</div>
+        <h3 id="tutorial-title">Bienvenido</h3>
+        <p id="tutorial-desc"></p>
+      </div>
+      <div class="tutorial-footer">
+        <button type="button" id="tutorial-skip-btn" class="btn ghost">Omitir tutorial</button>
+        <div class="tutorial-nav">
+          <button type="button" id="tutorial-prev-btn" class="btn secondary">Anterior</button>
+          <button type="button" id="tutorial-next-btn" class="btn primary">Siguiente</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

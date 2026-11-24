@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Diagrama de Ishikawa v3.0 — Plataforma Web Académica UPFIM</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --soft: #f1f5f9;
+      --border: #cbd5e1;
+      --text: #0f172a;
+      --muted: #475569;
+      --primary: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 20px 20px 56px;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 18px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    h1 { margin: 0; font-size: 1.45rem; }
+    .subtitle { margin: 3px 0 0; color: var(--muted); font-size: 0.9rem; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      padding: 8px 13px;
+      border-radius: 9px;
+      font-weight: 600;
+      font-size: 0.84rem;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn:hover { border-color: var(--primary); color: var(--primary); }
+    .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .btn.primary:hover { opacity: 0.93; color: #fff; }
+
+    .diagram-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 6px 20px rgba(15, 23, 42, 0.06);
+      margin-bottom: 18px;
+      overflow-x: auto;
+    }
+    .diagram-card svg {
+      width: 100%;
+      min-width: 1120px;
+      height: auto;
+      display: block;
+    }
+
+    .inspector-grid {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 16px;
+      margin-bottom: 22px;
+    }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .panel h2 { margin: 0 0 8px; font-size: 1.08rem; }
+
+    .controls-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .chip {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .chip.active { background: #0f172a; color: #fff; border-color: #0f172a; }
+    .search-input {
+      margin-left: auto;
+      padding: 7px 12px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      font-size: 0.85rem;
+      min-width: 240px;
+    }
+
+    .sev-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+    .sev-pill.ALTA { background: #fee2e2; color: #991b1b; }
+    .sev-pill.MEDIA { background: #fef3c7; color: #92400e; }
+
+    .why-list { margin: 8px 0 0; padding-left: 18px; font-size: 0.86rem; }
+    .why-list li { margin-bottom: 4px; }
+
+    .table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow-x: auto;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: top; }
+    th { background: var(--soft); font-weight: 700; }
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover { background: #f8fafc; }
+    tr.selected-row { background: #eff6ff; }
+    code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-size: 0.8rem; }
+
+    @media (max-width: 960px) {
+      .inspector-grid { grid-template-columns: 1fr; }
+      .search-input { margin-left: 0; width: 100%; }
+    }
+    @media print {
+      body { background: #fff; }
+      .actions, .controls-bar, .no-print { display: none !important; }
+      .diagram-card { box-shadow: none; border: none; padding: 0; }
+      .diagram-card svg { min-width: 100%; }
+      .panel, .table-wrap { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Diagrama de Ishikawa (6M · 24 Causas Raíz) — Versión 3.0</h1>
+        <p class="subtitle">UPFIM · 7TIDG2 · Plataforma Web Académica de Gestión de Tareas, Racha y Chat Inteligente</p>
+      </div>
+      <div class="actions">
+        <button class="btn" id="dl-svg-btn">Descargar SVG</button>
+        <button class="btn" id="dl-png-btn">Descargar PNG</button>
+        <button class="btn primary" onclick="window.print()">Imprimir / Guardar PDF</button>
+      </div>
+    </header>
+
+    <section class="diagram-card">
+      <div id="svg-host"></div>
+    </section>
+
+    <div class="controls-bar">
+      <button class="chip active" data-cat="all">Todas (24)</button>
+      <button class="chip" data-cat="tech">1. Arquitectura y Datos</button>
+      <button class="chip" data-cat="process">2. Metodología y QA</button>
+      <button class="chip" data-cat="ux">3. Diseño UX/UI</button>
+      <button class="chip" data-cat="time">4. Precisión Temporal</button>
+      <button class="chip" data-cat="env">5. Infraestructura y Red</button>
+      <button class="chip" data-cat="people">6. Equipo y Respaldos</button>
+      <input type="search" id="cause-search" class="search-input" placeholder="Filtrar causa, HU o solución..." />
+    </div>
+
+    <section class="inspector-grid">
+      <article class="panel" id="cause-inspector"></article>
+      <article class="panel" id="why-panel"></article>
+    </section>
+
+    <section class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Ref.</th>
+            <th>Causa / Problema</th>
+            <th>Categoría 6M</th>
+            <th>Riesgo</th>
+            <th>HU</th>
+            <th>Contramedida Implementada</th>
+          </tr>
+        </thead>
+        <tbody id="matrix-body"></tbody>
+      </table>
+    </section>
+  </div>
+
+  <script>
+    const CATEGORIES = [
+      {
+        id: 'tech',
+        pos: 'top',
+        boxX: 165,
+        diagTopX: 355,
+        diagSpineX: 465,
+        cardX: 42,
+        color: '#2563eb',
+        ribColor: '#3b82f6',
+        borderColor: '#93c5fd',
+        title: '1. Arquitectura, Código y Datos',
+        sub: '(Tecnología · 4 Causas Raíz)',
+        fiveWhys: [
+          '1. La web presentaba fallas operativas y pérdida ocasional de tareas.',
+          '2. Las escrituras no estaban protegidas en una base relacional con restricciones.',
+          '3. Faltaban validaciones del lado servidor, llaves foráneas y cifrado de sesiones.',
+          '4. No se había definido un esquema SQLite transaccional ni control estricto por rol.',
+          '5. Raíz: Se diseñó SQLite en modo WAL, hash scrypt, expiración de 30 min y RBAC en API.'
+        ],
+        causes: [
+          {
+            id: 'c1', ref: '#13 / #1', title: 'Errores lógicos y fallas',
+            root: 'Sin validaciones ni manejo global HTTP',
+            sev: 'ALTA', hu: 'HU-01..HU-50', file: 'server/index.js',
+            mitigation: 'Manejo global de errores JSON/HTTP, validaciones estrictas de entrada y cero dependencias externas inestables.'
+          },
+          {
+            id: 'c2', ref: '#18', title: 'Problemas al guardar tareas',
+            root: 'Escritura sin modo WAL ni campos validados',
+            sev: 'ALTA', hu: 'HU-11, HU-12', file: 'server/db.js · public/js/student.js',
+            mitigation: 'Persistencia inmediata en SQLite (WAL) y validación visual de campos obligatorios marcados en rojo.'
+          },
+          {
+            id: 'c3', ref: '#2', title: 'Pérdida de información del alumno',
+            root: 'Sin llaves foráneas ni modal de confirmación',
+            sev: 'ALTA', hu: 'HU-03, HU-14', file: 'server/db.js · public/js/student.js',
+            mitigation: 'Integridad referencial ON DELETE CASCADE y modal de confirmación previa antes de eliminar.'
+          },
+          {
+            id: 'c4', ref: '#12', title: 'Falla de seguridad y datos expuestos',
+            root: 'Sin hash scrypt, expiración 30m ni control RBAC',
+            sev: 'ALTA', hu: 'HU-01, HU-02, HU-06', file: 'server/auth.js',
+            mitigation: 'Contraseñas con scrypt + salt, expiración automática tras 30 min de inactividad y aislamiento estricto de roles.'
+          }
+        ]
+      },
+      {
+        id: 'process',
+        pos: 'top',
+        boxX: 630,
+        diagTopX: 820,
+        diagSpineX: 930,
+        cardX: 505,
+        color: '#0d9488',
+        ribColor: '#14b8a6',
+        borderColor: '#5eead4',
+        title: '2. Metodología, Alcance y QA',
+        sub: '(Proceso · 4 Causas Raíz)',
+        fiveWhys: [
+          '1. Existía riesgo de retraso sobre la ruta crítica PERT de 52 días.',
+          '2. Surgió retrabajo entre lo descrito en el alcance, las 50 HU y las notas de cuaderno.',
+          '3. No había una resolución explícita de ambigüedades ni pruebas automáticas.',
+          '4. Cada documento se redactó de manera aislada sin verificación automatizada continua.',
+          '5. Raíz: Se consolidó la desambiguación en README y se creó la suite integral npm test.'
+        ],
+        causes: [
+          {
+            id: 'c5', ref: '#16', title: 'Req. cambiantes y ambiguos',
+            root: 'Contradicciones entre alcance, 50 HU y notas',
+            sev: 'ALTA', hu: 'Todas', file: 'documentacion/README.md',
+            mitigation: 'Desambiguación explícita de zonas horarias, tokens locales, reglas anti-exploit y alcance del chat IA.'
+          },
+          {
+            id: 'c6', ref: '#14', title: 'Falta de pruebas antes de entrega',
+            root: 'Sin suite automatizada para verificar épicas',
+            sev: 'ALTA', hu: 'Todas', file: 'tests/platform.test.js',
+            mitigation: 'Suite automatizada con node:test (npm test) cubriendo auth, tareas, racha, IA, portal docente y chat.'
+          },
+          {
+            id: 'c7', ref: '#4 / #17', title: 'Retraso y falta de tiempo',
+            root: 'Desvío en ruta crítica PERT 52d (A→B→C→E)',
+            sev: 'ALTA', hu: 'PERT / EDT', file: 'package.json · server/',
+            mitigation: 'Stack nativo Node.js + SQLite sin fricción de compilación para entregar en tiempo la ruta crítica.'
+          },
+          {
+            id: 'c8', ref: '#20', title: 'Falta de mantenimiento evolutivo',
+            root: 'Dependencias externas pesadas y acoplamiento',
+            sev: 'MEDIA', hu: 'Arquitectura', file: 'server/*.js · public/js/*.js',
+            mitigation: 'Separación modular por dominio (auth, streak, assistant, sse, student, teacher, chat).'
+          }
+        ]
+      },
+      {
+        id: 'ux',
+        pos: 'top',
+        boxX: 1095,
+        diagTopX: 1285,
+        diagSpineX: 1395,
+        cardX: 970,
+        color: '#7c3aed',
+        ribColor: '#8b5cf6',
+        borderColor: '#c4b5fd',
+        title: '3. Diseño UX/UI y Gamificación',
+        sub: '(Producto · 4 Causas Raíz)',
+        fiveWhys: [
+          '1. Los estudiantes perdían interés y les costaba ubicarse en la plataforma.',
+          '2. Las tareas se mostraban sin jerarquía, faltaba guía inicial y el reloj fallaba en 2º plano.',
+          '3. No existían incentivos visuales personalizados ni un temporizador basado en reloj real.',
+          '4. La interfaz se pensó como una lista plana en lugar de una agenda visual semanal.',
+          '5. Raíz: Se diseñó tablero 7 días, tutorial modal, 6 temas de racha y Pomodoro targetEndMs.'
+        ],
+        causes: [
+          {
+            id: 'c9', ref: '#7 / #15', title: 'Diseño plano y baja adopción',
+            root: 'Sin incentivos visuales ni temas de racha',
+            sev: 'ALTA', hu: 'HU-34..HU-37', file: 'public/css/styles.css · public/js/streak.js',
+            mitigation: 'Interfaz moderna con etiquetas de color, badges y galería de 6 temas de racha con vista previa en vivo.'
+          },
+          {
+            id: 'c10', ref: '#8', title: 'Dificultad de uso para estudiantes',
+            root: 'Falta tutorial emergente guiado paso a paso',
+            sev: 'MEDIA', hu: 'HU-07..HU-10', file: 'public/js/tutorial.js',
+            mitigation: 'Modal interactivo paso a paso en primer inicio de sesión y botón permanente "Ver tutorial".'
+          },
+          {
+            id: 'c11', ref: '#10', title: 'Desorden y falta de clasificación',
+            root: 'Sin vista semanal, filtro ni búsqueda en vivo',
+            sev: 'ALTA', hu: 'HU-15..HU-24', file: 'public/js/student.js',
+            mitigation: 'Tablero Lunes–Domingo destacando el día actual, vista diaria, historial por mes, filtros y búsqueda.'
+          },
+          {
+            id: 'c12', ref: '#9', title: 'Errores en reloj de concentración',
+            root: 'Timer por ticks se congela en segundo plano',
+            sev: 'MEDIA', hu: 'Mejora UX', file: 'public/js/timer.js',
+            mitigation: 'Temporizador Pomodoro calculado contra marca objetivo (targetEndMs) persistida en localStorage.'
+          }
+        ]
+      },
+      {
+        id: 'time',
+        pos: 'bottom',
+        boxX: 165,
+        diagTopX: 355,
+        diagSpineX: 465,
+        cardX: 42,
+        color: '#d97706',
+        ribColor: '#f59e0b',
+        borderColor: '#fcd34d',
+        title: '4. Precisión Temporal y Alertas',
+        sub: '(Medición y Control · 4 Causas Raíz)',
+        fiveWhys: [
+          '1. Las entregas vencían antes de hora y las rachas o recuperaciones generaban conflicto.',
+          '2. El servidor operaba en UTC y no controlaba reversión de puntos ni posposición de alertas.',
+          '3. Faltaba sincronizar la zona horaria del cliente y definir reglas deterministas.',
+          '4. Se asumió fecha simple sin considerar horario de México ni la restricción sin SMTP.',
+          '5. Raíz: X-Client-Timezone (America/Mexico_City), alertas posponibles, anti-exploit y bandeja local.'
+        ],
+        causes: [
+          {
+            id: 'c13', ref: '#5', title: 'Errores en fechas límite de tareas',
+            root: 'Desfase UTC vs hora local America/Mexico_City',
+            sev: 'ALTA', hu: 'HU-17', file: 'server/db.js · public/js/api.js',
+            mitigation: 'Cálculo calendario en zona local del estudiante y bloqueo de fechas/horas vencidas al registrar.'
+          },
+          {
+            id: 'c14', ref: '#6', title: 'Fallas en notificaciones internas',
+            root: 'Alertas <2h sin posponer 1h ni descartar',
+            sev: 'ALTA', hu: 'HU-25..HU-28', file: 'public/js/notifications.js',
+            mitigation: 'Alertas flotantes internas (<2h y resumen al entrar) con autocierre 10s, Posponer 1 hr y Descartar.'
+          },
+          {
+            id: 'c15', ref: '#21', title: 'Reglas ambiguas de racha/puntos',
+            root: 'Conflicto en HU-32 y exploit al desmarcar',
+            sev: 'MEDIA', hu: 'HU-29..HU-33', file: 'server/streak.js',
+            mitigation: 'Reinicio a día 1 tras ausencia y registro de points_awarded por tarea para revertir al desmarcar.'
+          },
+          {
+            id: 'c16', ref: '#22', title: 'Recuperar clave sin SMTP',
+            root: 'Tensión entre HU-04 y restricción HU-28',
+            sev: 'MEDIA', hu: 'HU-04 / HU-28', file: 'server/auth.js · public/js/app.js',
+            mitigation: 'Generación de token criptográfico (15 min) mostrado en bandeja local segura sin envío externo.'
+          }
+        ]
+      },
+      {
+        id: 'env',
+        pos: 'bottom',
+        boxX: 630,
+        diagTopX: 820,
+        diagSpineX: 930,
+        cardX: 505,
+        color: '#0284c7',
+        ribColor: '#38bdf8',
+        borderColor: '#7dd3fc',
+        title: '5. Infraestructura, Red y Entorno',
+        sub: '(Entorno Operativo · 4 Causas Raíz)',
+        fiveWhys: [
+          '1. El sitio podía quedar inutilizable en celulares, sin red o sin clave externa de IA.',
+          '2. Se requería conectividad constante para servicios externos e integración institucional.',
+          '3. No existía modo degradado, diseño fluido ni catálogo local de grupos y horarios.',
+          '4. El diseño inicial asumía navegador de escritorio y APIs de terceros siempre disponibles.',
+          '5. Raíz: CSS responsivo, aviso offline, motor híbrido de IA offline y catálogo local SQLite.'
+        ],
+        causes: [
+          {
+            id: 'c17', ref: '#3', title: 'Problemas de conexión a internet',
+            root: 'Sin aviso offline ni reconexión en tiempo real',
+            sev: 'ALTA', hu: 'Limitación 2', file: 'public/js/app.js · server/sse.js',
+            mitigation: 'Banner de estado de red en tiempo real, cero CDNs obligatorios y reconexión automática SSE.'
+          },
+          {
+            id: 'c18', ref: '#11', title: 'Incompatibilidad móvil/navegador',
+            root: 'Interfaz rígida sin CSS responsivo móvil',
+            sev: 'ALTA', hu: 'Limitación 1', file: 'public/css/styles.css',
+            mitigation: 'Maquetación adaptable con CSS Grid/Flexbox compatible con navegadores modernos y móviles.'
+          },
+          {
+            id: 'c19', ref: '#23', title: 'Dependencia rígida de API IA',
+            root: 'Chat inoperante sin llave o sin filtro HU-41',
+            sev: 'ALTA', hu: 'HU-38..HU-42', file: 'server/assistant.js',
+            mitigation: 'Motor híbrido operativo 100% local (con GEMINI_API_KEY opcional) y guardrail estricto escolar.'
+          },
+          {
+            id: 'c20', ref: '#24', title: 'Sin enlace al sistema escolar',
+            root: 'Falta catálogo local de grupos y horarios',
+            sev: 'MEDIA', hu: 'Limitación 7', file: 'server/seed.js · server/index.js',
+            mitigation: 'Catálogo académico local (grupos, materias con clave/color y horarios L–V) integrado al registro.'
+          }
+        ]
+      },
+      {
+        id: 'people',
+        pos: 'bottom',
+        boxX: 1095,
+        diagTopX: 1285,
+        diagSpineX: 1395,
+        cardX: 970,
+        color: '#be185d',
+        ribColor: '#ec4899',
+        borderColor: '#f9a8d4',
+        title: '6. Gestión del Equipo y Respaldos',
+        sub: '(Personas y Gobernanza · 4 Causas Raíz)',
+        fiveWhys: [
+          '1. Podían perderse avances del equipo o violarse restricciones de alcance docente/chat.',
+          '2. No había estructura de repositorio versionable ni candados técnicos de gobernanza.',
+          '3. Las responsabilidades RACI no estaban reflejadas en permisos concretos del sistema.',
+          '4. Se confiaba en que el usuario o desarrollador no ejecutara acciones fuera de alcance.',
+          '5. Raíz: .gitignore + semilla reproducible + bloqueos 403/400 en API según matriz de alcance.'
+        ],
+        causes: [
+          {
+            id: 'c21', ref: '#19', title: 'Pérdida de archivos del proyecto',
+            root: 'Falta control Git, .gitignore y datos semilla',
+            sev: 'ALTA', hu: 'Gobernanza', file: '.gitignore · server/seed.js',
+            mitigation: 'Estructura limpia versionable en Git con .gitignore y reconstrucción automática de BD semilla.'
+          },
+          {
+            id: 'c22', ref: 'RACI-1', title: 'Cuellos de botella en equipo',
+            root: 'Dependencia lineal entre módulos A, B, C y E',
+            sev: 'MEDIA', hu: 'Matriz RACI', file: 'server/ · public/js/',
+            mitigation: 'Arquitectura desacoplada por entregables EDT para desarrollo y pruebas en paralelo.'
+          },
+          {
+            id: 'c23', ref: 'RACI-2', title: 'Desvío de alcance Docente',
+            root: 'Riesgo de permitir asignar/calificar (HU-46)',
+            sev: 'MEDIA', hu: 'HU-43..HU-46', file: 'public/js/teacher.js · server/index.js',
+            mitigation: 'Portal docente de exclusiva consulta sin formularios de tareas/notas y rechazo 403 en API.'
+          },
+          {
+            id: 'c24', ref: 'RACI-3', title: 'Sobrecarga en chat privado',
+            root: 'Riesgo de adjuntos/video contra HU-50',
+            sev: 'MEDIA', hu: 'HU-47..HU-50', file: 'public/js/chat.js · server/index.js',
+            mitigation: 'Mensajería exclusivamente de texto plano vía SSE con badge +N y rechazo 400 a adjuntos.'
+          }
+        ]
+      }
+    ];
+
+    const ALL_CAUSES = CATEGORIES.flatMap((cat) =>
+      cat.causes.map((c) => ({ ...c, catId: cat.id, catTitle: cat.title, color: cat.color, fiveWhys: cat.fiveWhys }))
+    );
+
+    let activeCat = 'all';
+    let selectedCauseId = ALL_CAUSES[0].id;
+    let searchTerm = '';
+
+    const svgHost = document.getElementById('svg-host');
+    const inspectorEl = document.getElementById('cause-inspector');
+    const whyEl = document.getElementById('why-panel');
+    const matrixBody = document.getElementById('matrix-body');
+    const searchInput = document.getElementById('cause-search');
+    const filterButtons = document.querySelectorAll('.controls-bar .chip');
+
+    function buildInteractiveSvg() {
+      const topYs = [220, 300, 380, 460];
+      const botYs = [620, 700, 780, 860];
+      const topDx = [18, 41, 64, 87];
+      const botDx = [23, 46, 69, 92];
+
+      const catSvgs = CATEGORIES.map((cat) => {
+        const isTop = cat.pos === 'top';
+        const dim = activeCat !== 'all' && activeCat !== cat.id ? 0.25 : 1;
+        const boxY = isTop ? 108 : 922;
+        const yDiagStart = isTop ? 158 : 922;
+
+        const ribs = cat.causes.map((c, idx) => {
+          const y = isTop ? topYs[idx] : botYs[idx];
+          const xs = isTop ? cat.diagTopX + topDx[idx] : cat.diagSpineX - botDx[idx];
+          const rightEdge = xs - 28;
+          const width = rightEdge - cat.cardX;
+          const cardY = y - 28;
+          const isSel = c.id === selectedCauseId;
+          const badgeW = c.sev === 'ALTA' ? 44 : 47;
+          const badgeBg = c.sev === 'ALTA' ? '#fee2e2' : '#fef3c7';
+          const badgeFill = c.sev === 'ALTA' ? '#991b1b' : '#92400e';
+          const badgeX = rightEdge - badgeW - 9;
+
+          return `
+            <g class="cause-node" data-cause-id="${c.id}" style="cursor:pointer;">
+              <line x1="${rightEdge}" y1="${y}" x2="${xs}" y2="${y}" stroke="${cat.ribColor}" stroke-width="${isSel ? 3.2 : 2.2}" />
+              <circle cx="${xs}" cy="${y}" r="${isSel ? 5 : 4}" fill="${cat.color}" />
+              <rect x="${cat.cardX}" y="${cardY}" width="${width}" height="56" rx="8"
+                fill="${isSel ? '#eff6ff' : '#ffffff'}"
+                stroke="${isSel ? cat.color : cat.borderColor}"
+                stroke-width="${isSel ? 2.4 : 1.3}" />
+              <rect x="${cat.cardX}" y="${cardY}" width="6" height="56" rx="3" fill="${cat.color}" />
+              <rect x="${badgeX}" y="${cardY + 7}" width="${badgeW}" height="16" rx="8" fill="${badgeBg}" />
+              <text x="${badgeX + badgeW / 2}" y="${cardY + 18}" text-anchor="middle" font-size="9.5" font-weight="700" fill="${badgeFill}">${c.sev}</text>
+              <text x="${cat.cardX + 14}" y="${cardY + 21}" font-size="11.5" font-weight="700" fill="#0f172a">[${c.ref}] ${c.title}</text>
+              <text x="${cat.cardX + 14}" y="${cardY + 41}" font-size="10.2" fill="#475569">Raíz: ${c.root}</text>
+            </g>
+          `;
+        }).join('');
+
+        return `
+          <g style="opacity:${dim}; transition: opacity 0.15s ease;">
+            <line x1="${cat.diagTopX}" y1="${yDiagStart}" x2="${cat.diagSpineX}" y2="540" stroke="${cat.color}" stroke-width="4" stroke-linecap="round" />
+            <rect x="${cat.boxX}" y="${boxY}" width="310" height="50" rx="10" fill="${cat.color}" />
+            <text x="${cat.boxX + 155}" y="${boxY + 22}" text-anchor="middle" font-size="14.5" font-weight="700" fill="#ffffff">${cat.title}</text>
+            <text x="${cat.boxX + 155}" y="${boxY + 40}" text-anchor="middle" font-size="11.5" font-weight="600" fill="#f1f5f9">${cat.sub}</text>
+            ${ribs}
+          </g>
+        `;
+      }).join('');
+
+      svgHost.innerHTML = `
+        <svg id="ishikawa-live-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1060">
+          <defs>
+            <linearGradient id="bgLive" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#f8fafc" />
+              <stop offset="100%" stop-color="#eef2ff" />
+            </linearGradient>
+            <linearGradient id="headLive" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#dc2626" />
+              <stop offset="100%" stop-color="#7f1d1d" />
+            </linearGradient>
+          </defs>
+          <rect width="1800" height="1060" fill="url(#bgLive)" rx="14" />
+          <rect x="16" y="16" width="1768" height="1028" fill="none" stroke="#cbd5e1" stroke-width="1.5" rx="10" />
+          <text x="42" y="52" font-size="23" font-weight="800" fill="#0f172a">Diagrama de Ishikawa (Espina de Pescado · 6M) — Plataforma Web Académica UPFIM</text>
+          <text x="42" y="75" font-size="13.5" font-weight="500" fill="#475569">Haz clic en cualquier causa para inspeccionar su análisis de 5 Porqués y contramedida implementada</text>
+          <rect x="1150" y="34" width="608" height="44" rx="8" fill="#ffffff" stroke="#cbd5e1" />
+          <circle cx="1170" cy="56" r="6" fill="#dc2626" />
+          <text x="1182" y="60" font-size="11.5" font-weight="600" fill="#334155">Severidad Alta</text>
+          <circle cx="1290" cy="56" r="6" fill="#d97706" />
+          <text x="1302" y="60" font-size="11.5" font-weight="600" fill="#334155">Severidad Media</text>
+          <text x="1420" y="60" font-size="11.5" font-weight="600" fill="#334155">[#1–#20] Cuaderno · [#21–#24] Auditoría · [RACI]</text>
+          <line x1="80" y1="540" x2="1435" y2="540" stroke="#1e293b" stroke-width="6" stroke-linecap="round" />
+          <polygon points="25,475 88,540 25,605 52,540" fill="#334155" />
+          <polygon points="1428,526 1458,540 1428,554" fill="#1e293b" />
+          <path d="M 1458,435 C 1605,412 1752,468 1765,540 C 1752,612 1605,668 1458,645 Z" fill="url(#headLive)" />
+          <text x="1605" y="496" text-anchor="middle" font-size="13" font-weight="800" fill="#fecaca">EFECTO CENTRAL</text>
+          <text x="1605" y="524" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">Fallos operativos,</text>
+          <text x="1605" y="546" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">pérdida de organización</text>
+          <text x="1605" y="568" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">académica y baja adopción</text>
+          <text x="1605" y="590" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">de la Plataforma Web</text>
+          ${catSvgs}
+        </svg>
+      `;
+
+      svgHost.querySelectorAll('.cause-node').forEach((node) => {
+        node.addEventListener('click', () => {
+          selectedCauseId = node.dataset.causeId;
+          renderAll();
+        });
+      });
+    }
+
+    function renderInspectorAndMatrix() {
+      const current = ALL_CAUSES.find((c) => c.id === selectedCauseId) || ALL_CAUSES[0];
+
+      inspectorEl.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span style="font-size:0.8rem; font-weight:700; color:${current.color}">${current.catTitle}</span>
+          <span class="sev-pill ${current.sev}">Severidad ${current.sev}</span>
+        </div>
+        <h2 style="margin-top:6px;">[${current.ref}] ${current.title}</h2>
+        <p style="margin:6px 0; font-size:0.88rem;"><strong>Subcausa raíz (2º nivel):</strong> ${current.root}</p>
+        <p style="margin:6px 0; font-size:0.88rem;"><strong>Contramedida implementada:</strong> ${current.mitigation}</p>
+        <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:10px; font-size:0.82rem; color:#475569;">
+          <span><strong>HU vinculadas:</strong> ${current.hu}</span>
+          <span><strong>Implementado en:</strong> <code>${current.file}</code></span>
+        </div>
+      `;
+
+      whyEl.innerHTML = `
+        <h2 style="color:${current.color};">Análisis 5 Porqués — ${current.catTitle}</h2>
+        <ol class="why-list">
+          ${current.fiveWhys.map((w) => `<li>${w.replace(/^\d+\.\s*/, '')}</li>`).join('')}
+        </ol>
+      `;
+
+      const filtered = ALL_CAUSES.filter((c) => {
+        if (activeCat !== 'all' && c.catId !== activeCat) return false;
+        if (!searchTerm) return true;
+        const hay = `${c.ref} ${c.title} ${c.root} ${c.hu} ${c.mitigation} ${c.catTitle}`.toLowerCase();
+        return hay.includes(searchTerm);
+      });
+
+      matrixBody.innerHTML = filtered
+        .map(
+          (c) => `
+          <tr class="clickable ${c.id === selectedCauseId ? 'selected-row' : ''}" data-row-id="${c.id}">
+            <td><strong>${c.ref}</strong></td>
+            <td><strong>${c.title}</strong><br/><small style="color:#475569">${c.root}</small></td>
+            <td>${c.catTitle}</td>
+            <td><span class="sev-pill ${c.sev}">${c.sev}</span></td>
+            <td>${c.hu}</td>
+            <td>${c.mitigation} <br/><code>${c.file}</code></td>
+          </tr>
+        `
+        )
+        .join('');
+
+      matrixBody.querySelectorAll('tr[data-row-id]').forEach((row) => {
+        row.addEventListener('click', () => {
+          selectedCauseId = row.dataset.rowId;
+          renderAll();
+        });
+      });
+    }
+
+    function renderAll() {
+      buildInteractiveSvg();
+      renderInspectorAndMatrix();
+    }
+
+    filterButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        filterButtons.forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        activeCat = btn.dataset.cat;
+        renderAll();
+      });
+    });
+
+    searchInput.addEventListener('input', () => {
+      searchTerm = searchInput.value.trim().toLowerCase();
+      renderInspectorAndMatrix();
+    });
+
+    document.getElementById('dl-svg-btn').addEventListener('click', () => {
+      const svgEl = document.getElementById('ishikawa-live-svg');
+      const serializer = new XMLSerializer();
+      const source = serializer.serializeToString(svgEl);
+      const blob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'diagrama-ishikawa-upfim-v3.svg';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    document.getElementById('dl-png-btn').addEventListener('click', () => {
+      const svgEl = document.getElementById('ishikawa-live-svg');
+      const source = new XMLSerializer().serializeToString(svgEl);
+      const img = new Image();
+      const svgBlob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 2400;
+        canvas.height = 1413;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        const pngUrl = canvas.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = pngUrl;
+        a.download = 'diagrama-ishikawa-upfim-v3.png';
+        a.click();
+      };
+      img.src = url;
+    });
+
+    renderAll();
+  </script>
+</body>
+</html>

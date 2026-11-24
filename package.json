@@ -1,0 +1,16 @@
+{
+  "name": "plataforma-academica-upfim",
+  "version": "1.0.0",
+  "description": "Plataforma Web Académica de Gestión de Tareas, Rachas de Cumplimiento, Asistente Inteligente y Portal Docente (UPFIM - 7TIDG2)",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node --no-warnings server/index.js",
+    "dev": "node --watch --no-warnings server/index.js",
+    "test": "node --test --no-warnings tests/platform.test.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "license": "MIT"
+}
