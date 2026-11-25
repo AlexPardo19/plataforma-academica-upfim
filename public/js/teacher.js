@@ -1,5 +1,7 @@
-import { apiFetch, escapeHtml } from './api.js';
+import { apiFetch, escapeHtml, sanitizeHexColor } from './api.js';
 import { openChatModal } from './chat.js';
+import { iconSvg } from './icons.js';
+import { closeAllPopovers, enhanceAllSelects, enhanceColorPicker } from './ui.js';
 
 const DAY_NAMES = ['', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
 const PRIO_LABEL = { high: 'Alta', medium: 'Media', low: 'Baja' };
@@ -16,7 +18,7 @@ let cachedSubjects = [];
 async function loadGroupsAndStudents() {
   const { groups } = await apiFetch('/api/teacher/groups');
   cachedGroups = groups || [];
-  if (!selectedGroupId && cachedGroups.length > 0) {
+  if ((!selectedGroupId || !cachedGroups.some((g) => g.id === selectedGroupId)) && cachedGroups.length > 0) {
     selectedGroupId = cachedGroups[0].id;
   }
 
@@ -37,26 +39,30 @@ async function loadGroupsAndStudents() {
   groupsPanel.innerHTML = `
     <div class="teacher-grid">
       <div class="card teacher-list-card">
-        <h3>Grupos Asignados</h3>
-        <p class="small-text muted">Selecciona un grupo para consultar el avance general y sus alumnos.</p>
-        ${cachedGroups
-          .map(
-            (g) => `
+        <h3>Grupos asignados</h3>
+        <p class="small-text muted">Selecciona un grupo para consultar su avance general y sus estudiantes.</p>
+        ${
+          cachedGroups.length === 0
+            ? '<div class="muted small-text">Aún no tienes materias vinculadas a un grupo. Regístralas en "Mis materias".</div>'
+            : cachedGroups
+                .map(
+                  (g) => `
           <button type="button" class="group-pill-card ${g.id === selectedGroupId ? 'active' : ''}" data-group-id="${g.id}">
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <strong>Grupo ${escapeHtml(g.name)}</strong>
-              <span class="chip-mini">${g.completionRate}% entrega</span>
+              <span class="chip-mini">${Number(g.completionRate)}% entrega</span>
             </div>
-            <div class="small-text muted">${g.studentCount} alumnos · ${g.completedTasks}/${g.totalTasks} tareas</div>
-            <div class="progress-bar"><div class="progress-fill" style="width:${g.completionRate}%"></div></div>
+            <div class="small-text muted" style="margin-top:3px;">${Number(g.studentCount)} alumnos · ${Number(g.completedTasks)}/${Number(g.totalTasks)} tareas</div>
+            <div class="progress-bar"><div class="progress-fill" style="width:${Math.min(100, Math.max(0, Number(g.completionRate)))}%"></div></div>
           </button>
         `
-          )
-          .join('')}
+                )
+                .join('')
+        }
       </div>
 
       <div class="card teacher-detail-card">
-        <h3>Estudiantes del Grupo</h3>
+        <h3>Estudiantes del grupo</h3>
         ${
           students.length === 0
             ? '<div class="empty-state">No hay estudiantes inscritos en este grupo.</div>'
@@ -65,15 +71,17 @@ async function loadGroupsAndStudents() {
             ${students
               .map(
                 (s) => `
-              <div class="card" style="padding:12px; border-color:${s.id === selectedStudentId ? 'var(--primary)' : 'var(--border)'}">
+              <div class="card" style="padding:14px; border-color:${s.id === selectedStudentId ? 'var(--primary)' : 'var(--border)'}">
                 <strong>${escapeHtml(s.name)}</strong>
                 <div class="small-text muted">${escapeHtml(s.email)}</div>
-                <div class="small-text" style="margin:6px 0;">
-                  🔥 Racha: <strong>${s.streakDays}d</strong> · Avance: <strong>${s.completionRate}%</strong> (${s.completedTasks}/${s.totalTasks})
+                <div class="student-stat-line">
+                  <span class="student-stat-chip">${iconSvg('flame', { size: 13 })}<span><strong>${Number(s.streakDays)}d</strong> racha</span></span>
+                  <span>·</span>
+                  <span>Avance: <strong>${Number(s.completionRate)}%</strong> (${Number(s.completedTasks)}/${Number(s.totalTasks)})</span>
                 </div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap;">
                   <button type="button" class="btn secondary small" data-inspect-student="${s.id}">Ver expediente</button>
-                  <button type="button" class="btn primary small" data-chat-student="${s.id}">Iniciar chat</button>
+                  <button type="button" class="btn primary small" data-chat-student="${s.id}">Mensaje</button>
                 </div>
               </div>
             `
@@ -86,13 +94,15 @@ async function loadGroupsAndStudents() {
         ${
           studentDetail
             ? `
-          <div style="border-top:1px solid var(--border); padding-top:14px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+          <div style="border-top:1px solid var(--border); padding-top:16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
               <div>
-                <h4 style="margin:0;">Expediente de ${escapeHtml(studentDetail.student.name)} (Solo Lectura)</h4>
-                <small class="muted">Portal de consulta exclusiva: sin asignación ni calificación de tareas.</small>
+                <h4 style="margin:0; font-size:0.98rem;">Expediente de ${escapeHtml(studentDetail.student.name)}</h4>
+                <small class="muted">Modo de exclusiva consulta: sin asignación ni calificación de tareas.</small>
               </div>
-              <button type="button" class="btn primary small" data-chat-student="${studentDetail.student.id}">Enviar mensaje privado</button>
+              <button type="button" class="btn primary small" data-chat-student="${studentDetail.student.id}">
+                ${iconSvg('message', { size: 14 })}<span>Enviar mensaje privado</span>
+              </button>
             </div>
             ${
               studentDetail.tasks.length === 0
@@ -100,22 +110,27 @@ async function loadGroupsAndStudents() {
                 : `
               <div class="cards-3">
                 ${studentDetail.tasks
-                  .map(
-                    (t) => `
-                  <article class="task-card ${t.completed ? 'completed' : ''}" style="border-left-color:${escapeHtml(t.subject_color)}">
+                  .map((t) => {
+                    const safeColor = sanitizeHexColor(t.subject_color);
+                    const prioKey = ['high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium';
+                    const statusBadge = t.completed
+                      ? `<span class="status-inline done">${iconSvg('checkCircle', { size: 13 })}<span>Completada</span></span>`
+                      : `<span class="status-inline pending">${iconSvg('clock', { size: 13 })}<span>Pendiente</span></span>`;
+                    return `
+                  <article class="task-card ${t.completed ? 'completed' : ''}" style="border-left-color:${safeColor}">
                     <div class="task-title">${escapeHtml(t.title)}</div>
                     <div class="task-badges">
-                      <span class="subject-tag" style="background:${escapeHtml(t.subject_color)}">${escapeHtml(t.subject_name)}</span>
-                      <span class="prio-tag prio-${t.priority}">${PRIO_LABEL[t.priority] || t.priority}</span>
+                      <span class="subject-tag" style="background:${safeColor}">${escapeHtml(t.subject_name)}</span>
+                      <span class="prio-tag prio-${prioKey}">${PRIO_LABEL[prioKey]}</span>
                     </div>
                     <div class="task-meta">
                       <span>Límite: ${escapeHtml(t.due_at.replace('T', ' '))}</span>
-                      <strong>${t.completed ? '✅ Completada' : '⏳ Pendiente'}</strong>
+                      ${statusBadge}
                     </div>
                     ${t.description ? `<div class="task-notes">${escapeHtml(t.description)}</div>` : ''}
                   </article>
-                `
-                  )
+                `;
+                  })
                   .join('')}
               </div>
             `
@@ -156,54 +171,67 @@ async function loadSubjects() {
   const groups = grpRes.groups || [];
 
   subjectsPanel.innerHTML = `
-    <div class="card" style="padding:18px; margin-bottom:16px;">
-      <h3 style="margin-top:0;">Mis Materias Asignadas del Cuatrimestre</h3>
+    <div class="card" style="padding:20px; margin-bottom:16px;">
+      <h3 style="margin-top:0; font-size:1.05rem;">Mis asignaturas del cuatrimestre</h3>
       <div class="cards-3">
         ${cachedSubjects
-          .map(
-            (s) => `
-          <article class="card" style="padding:14px; border-top:4px solid ${escapeHtml(s.color)}">
+          .map((s) => {
+            const safeColor = sanitizeHexColor(s.color);
+            return `
+          <article class="card" style="padding:15px; border-top:3px solid ${safeColor}">
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <span class="chip-mini">${escapeHtml(s.code)}</span>
-              <strong>Grupo ${escapeHtml(s.groupName)}</strong>
+              <strong style="font-size:0.84rem;">Grupo ${escapeHtml(s.groupName)}</strong>
             </div>
-            <h4 style="margin:8px 0 4px;">${escapeHtml(s.name)}</h4>
-            <div class="small-text muted">${s.enrolledCount} alumnos inscritos · ${s.weeklyHours} hrs/semana</div>
+            <h4 style="margin:10px 0 4px; font-size:0.95rem;">${escapeHtml(s.name)}</h4>
+            <div class="small-text muted">${Number(s.enrolledCount)} alumnos inscritos · ${Number(s.weeklyHours)} hrs/semana</div>
           </article>
-        `
-          )
+        `;
+          })
           .join('')}
       </div>
     </div>
 
-    <div class="card" style="padding:18px;">
-      <h4 style="margin-top:0;">Capturar Materia Local (sin conexión institucional)</h4>
+    <div class="card" style="padding:20px;">
+      <h4 style="margin:0 0 12px; font-size:0.95rem;">Registrar nueva asignatura</h4>
+      <div id="teacher-subject-alert" class="alert error hidden"></div>
       <form id="teacher-add-subject-form" class="toolbar-filters">
-        <input type="text" id="sub-code" placeholder="Clave (ej. TI-705)" required style="max-width:140px;" />
-        <input type="text" id="sub-name" placeholder="Nombre de la asignatura" required style="flex:1;" />
+        <input type="text" id="sub-code" placeholder="Clave (ej. TI-705)" required maxlength="30" style="max-width:150px;" />
+        <input type="text" id="sub-name" placeholder="Nombre de la asignatura" required maxlength="120" style="flex:1; min-width:200px;" />
         <select id="sub-group" required>
-          ${groups.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('')}
+          ${groups.map((g) => `<option value="${g.id}">Grupo ${escapeHtml(g.name)}</option>`).join('')}
         </select>
-        <input type="number" id="sub-hours" min="1" max="15" value="4" style="max-width:90px;" title="Horas semanales" />
-        <input type="color" id="sub-color" value="#0d9488" style="max-width:56px; padding:3px;" />
-        <button type="submit" class="btn primary small">Agregar materia</button>
+        <input type="number" id="sub-hours" min="1" max="20" value="4" style="max-width:96px;" title="Horas semanales" />
+        <input type="color" id="sub-color" value="#0d9488" data-compact="1" />
+        <button type="submit" class="btn primary">Agregar asignatura</button>
       </form>
     </div>
   `;
 
+  enhanceAllSelects(subjectsPanel);
+  enhanceColorPicker(document.getElementById('sub-color'));
+
   document.getElementById('teacher-add-subject-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    await apiFetch('/api/teacher/subjects', {
-      method: 'POST',
-      body: {
-        code: document.getElementById('sub-code').value,
-        name: document.getElementById('sub-name').value,
-        groupId: Number(document.getElementById('sub-group').value),
-        weeklyHours: Number(document.getElementById('sub-hours').value),
-        color: document.getElementById('sub-color').value
-      }
-    });
-    await loadSubjects();
+    const alertBox = document.getElementById('teacher-subject-alert');
+    alertBox.classList.add('hidden');
+    try {
+      await apiFetch('/api/teacher/subjects', {
+        method: 'POST',
+        body: {
+          code: document.getElementById('sub-code').value,
+          name: document.getElementById('sub-name').value,
+          groupId: Number(document.getElementById('sub-group').value),
+          weeklyHours: Number(document.getElementById('sub-hours').value),
+          color: sanitizeHexColor(document.getElementById('sub-color').value, '#0d9488')
+        }
+      });
+      closeAllPopovers();
+      await loadSubjects();
+    } catch (err) {
+      alertBox.textContent = err.message;
+      alertBox.classList.remove('hidden');
+    }
   });
 }
 
@@ -213,9 +241,9 @@ async function loadSchedule() {
   const subjects = subRes.subjects || [];
 
   schedulePanel.innerHTML = `
-    <div class="card" style="padding:18px; margin-bottom:16px;">
-      <h3 style="margin-top:0;">Mi Horario del Cuatrimestre (Lunes a Viernes)</h3>
-      <p class="small-text muted">Haz clic en cualquier bloque de clase para desplegar el aula y edificio asignado.</p>
+    <div class="card" style="padding:20px; margin-bottom:16px;">
+      <h3 style="margin-top:0; font-size:1.05rem;">Mi horario del cuatrimestre (Lunes a Viernes)</h3>
+      <p class="small-text muted">Selecciona cualquier bloque de clase para desplegar el aula y edificio asignado.</p>
       <div class="schedule-grid">
         ${[1, 2, 3, 4, 5]
           .map((day) => {
@@ -227,18 +255,20 @@ async function loadSchedule() {
                 dayBlocks.length === 0
                   ? '<div class="small-text muted">Sin clases</div>'
                   : dayBlocks
-                      .map(
-                        (b) => `
-                  <div class="schedule-block" style="border-left-color:${escapeHtml(b.subjectColor)}" data-toggle-block="${b.id}">
+                      .map((b) => {
+                        const safeColor = sanitizeHexColor(b.subjectColor);
+                        return `
+                  <div class="schedule-block" style="border-left-color:${safeColor}" data-toggle-block="${b.id}">
                     <div class="small-text muted">${escapeHtml(b.startTime)} – ${escapeHtml(b.endTime)}</div>
-                    <strong>${escapeHtml(b.subjectName)}</strong>
-                    <div class="small-text">${escapeHtml(b.subjectCode)} · Grupo ${escapeHtml(b.groupName)}</div>
+                    <strong style="font-size:0.86rem; display:block; margin:2px 0;">${escapeHtml(b.subjectName)}</strong>
+                    <div class="small-text muted">${escapeHtml(b.subjectCode)} · Grupo ${escapeHtml(b.groupName)}</div>
                     <div class="schedule-extra hidden" id="sch-extra-${b.id}">
-                      📍 <strong>${escapeHtml(b.classroom)}</strong><br/>${escapeHtml(b.building)}
+                      ${iconSvg('pin', { size: 14 })}
+                      <div><strong>${escapeHtml(b.classroom)}</strong><br/>${escapeHtml(b.building)}</div>
                     </div>
                   </div>
-                `
-                      )
+                `;
+                      })
                       .join('')
               }
             </div>
@@ -248,23 +278,31 @@ async function loadSchedule() {
       </div>
     </div>
 
-    <div class="card" style="padding:18px;">
-      <h4 style="margin-top:0;">Capturar Bloque Horario Local</h4>
+    <div class="card" style="padding:20px;">
+      <h4 style="margin:0 0 12px; font-size:0.95rem;">Agregar bloque de horario</h4>
+      <div id="teacher-schedule-alert" class="alert error hidden"></div>
       <form id="teacher-add-schedule-form" class="toolbar-filters">
         <select id="sch-subject" required>
-          ${subjects.map((s) => `<option value="${s.id}">${escapeHtml(s.name)} (${escapeHtml(s.groupName)})</option>`).join('')}
+          ${subjects
+            .map(
+              (s) =>
+                `<option value="${s.id}" data-dot-color="${sanitizeHexColor(s.color)}">${escapeHtml(s.name)} (${escapeHtml(s.groupName)})</option>`
+            )
+            .join('')}
         </select>
         <select id="sch-day" required>
           ${[1, 2, 3, 4, 5].map((d) => `<option value="${d}">${DAY_NAMES[d]}</option>`).join('')}
         </select>
-        <input type="time" id="sch-start" value="13:00" required />
-        <input type="time" id="sch-end" value="15:00" required />
-        <input type="text" id="sch-room" placeholder="Aula (ej. Aula 105)" required />
-        <input type="text" id="sch-building" placeholder="Edificio" required />
-        <button type="submit" class="btn primary small">Agregar bloque</button>
+        <input type="time" id="sch-start" value="13:00" style="max-width:120px;" required />
+        <input type="time" id="sch-end" value="15:00" style="max-width:120px;" required />
+        <input type="text" id="sch-room" placeholder="Aula (ej. Aula 105)" maxlength="80" style="max-width:170px;" required />
+        <input type="text" id="sch-building" placeholder="Edificio" maxlength="120" style="flex:1; min-width:170px;" required />
+        <button type="submit" class="btn primary">Agregar bloque</button>
       </form>
     </div>
   `;
+
+  enhanceAllSelects(schedulePanel);
 
   schedulePanel.querySelectorAll('[data-toggle-block]').forEach((card) => {
     card.addEventListener('click', () => {
@@ -275,18 +313,26 @@ async function loadSchedule() {
 
   document.getElementById('teacher-add-schedule-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    await apiFetch('/api/teacher/schedule', {
-      method: 'POST',
-      body: {
-        subjectId: Number(document.getElementById('sch-subject').value),
-        dayOfWeek: Number(document.getElementById('sch-day').value),
-        startTime: document.getElementById('sch-start').value,
-        endTime: document.getElementById('sch-end').value,
-        classroom: document.getElementById('sch-room').value,
-        building: document.getElementById('sch-building').value
-      }
-    });
-    await loadSchedule();
+    const alertBox = document.getElementById('teacher-schedule-alert');
+    alertBox.classList.add('hidden');
+    try {
+      await apiFetch('/api/teacher/schedule', {
+        method: 'POST',
+        body: {
+          subjectId: Number(document.getElementById('sch-subject').value),
+          dayOfWeek: Number(document.getElementById('sch-day').value),
+          startTime: document.getElementById('sch-start').value,
+          endTime: document.getElementById('sch-end').value,
+          classroom: document.getElementById('sch-room').value,
+          building: document.getElementById('sch-building').value
+        }
+      });
+      closeAllPopovers();
+      await loadSchedule();
+    } catch (err) {
+      alertBox.textContent = err.message;
+      alertBox.classList.remove('hidden');
+    }
   });
 }
 
@@ -298,6 +344,7 @@ export function initTeacherHandlers() {
   const tabBtns = document.querySelectorAll('[data-teacher-tab]');
   tabBtns.forEach((btn) => {
     btn.addEventListener('click', async () => {
+      closeAllPopovers();
       tabBtns.forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       const target = btn.dataset.teacherTab;

@@ -3,20 +3,26 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agenda UPFIM · Gestión Académica, Rachas y Chat Inteligente</title>
+  <title>Agenda UPFIM · Gestión Académica</title>
   <link rel="stylesheet" href="/css/styles.css" />
 </head>
 <body>
-  <!-- Barra de estado de conexión (Causa #3 Ishikawa) -->
+  <!-- Barra de estado de conexión -->
   <div id="network-banner" class="network-banner hidden" role="status">
-    Sin conexión a internet. Algunas funciones en línea (asistente y sincronización) requieren conectividad.
+    Sin conexión a internet. Algunas funciones en línea requieren conectividad.
   </div>
 
   <!-- Barra Superior Persistente -->
   <header id="topbar" class="topbar hidden">
     <div class="topbar-left">
       <div class="brand">
-        <span class="brand-logo" aria-hidden="true">🎓</span>
+        <span class="brand-logo" aria-hidden="true">
+          <svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3L2 8l10 5 10-5-10-5z"/>
+            <path d="M6 10.5v5.5c0 1.8 2.7 3.5 6 3.5s6-1.7 6-3.5v-5.5"/>
+            <path d="M22 8v6"/>
+          </svg>
+        </span>
         <div>
           <span class="brand-title">Agenda UPFIM</span>
           <span class="brand-sub" id="user-role-badge">Plataforma Académica</span>
@@ -27,13 +33,21 @@
     <div class="topbar-right">
       <!-- Contador de tareas pendientes (HU-26, solo Estudiante) -->
       <button id="pending-counter-pill" class="pill-btn hidden" title="Tareas pendientes por entregar">
-        📋 Pendientes <span id="pending-badge" class="badge neutral">0</span>
+        <svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M8 9h8"/><path d="M8 13h8"/><path d="M8 17h5"/>
+        </svg>
+        <span>Pendientes</span>
+        <span id="pending-badge" class="badge neutral">0</span>
       </button>
 
       <!-- Widget de Racha Activa (HU-31, solo Estudiante) -->
       <div id="streak-widget-wrap" class="streak-wrap hidden">
         <button id="streak-pill-btn" class="streak-pill" title="Ver detalle y personalizar racha">
-          <span id="streak-pill-icon" class="streak-flame">🔥</span>
+          <span id="streak-pill-icon" class="streak-flame">
+            <svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 22c4.2 0 7-2.9 7-6.8 0-3.3-2.1-5.7-4.2-7.8-.6 2.1-1.9 3.1-3.1 3.1 0-3.1-1.3-5.6-3.2-7.5C7.9 6.2 5 9.8 5 15.2 5 19.1 7.8 22 12 22z"/>
+            </svg>
+          </span>
           <span id="streak-pill-text">0 Días</span>
           <span id="streak-pill-pts" class="streak-pts">0 pts</span>
         </button>
@@ -57,19 +71,25 @@
             </div>
           </div>
           <p class="popover-hint">Ingresa cada día y entrega tareas a tiempo para sumar días y puntos.</p>
-          <button id="open-streak-customizer-btn" class="btn primary full">Personalizar Racha</button>
+          <button id="open-streak-customizer-btn" class="btn primary full">Personalizar racha</button>
         </div>
       </div>
 
-      <!-- Icono Chat Privado con Badge de No Leídos (HU-49) -->
-      <button id="open-chat-btn" class="icon-pill-btn" title="Chat privado Docente – Alumno">
-        💬 <span class="hide-sm">Mensajes</span>
+      <!-- Chat Privado con Badge de No Leídos (HU-49) -->
+      <button id="open-chat-btn" class="icon-pill-btn" title="Mensajes privados Docente – Alumno">
+        <svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span class="hide-sm">Mensajes</span>
         <span id="chat-unread-badge" class="badge danger hidden">0</span>
       </button>
 
       <!-- Botón Tutorial (HU-10) -->
-      <button id="open-tutorial-btn" class="icon-pill-btn" title="Ver tutorial de uso">
-        ❔ <span class="hide-sm">Ver tutorial</span>
+      <button id="open-tutorial-btn" class="icon-pill-btn" title="Ver guía de uso">
+        <svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/><path d="M9.4 9a2.7 2.7 0 0 1 5.1.9c0 1.8-2.5 2.3-2.5 3.8"/><circle cx="12" cy="17" r="0.6" fill="currentColor"/>
+        </svg>
+        <span class="hide-sm">Guía</span>
       </button>
 
       <!-- Perfil (HU-05) -->
@@ -79,21 +99,26 @@
       </button>
 
       <!-- Cerrar Sesión (HU-02) -->
-      <button id="logout-btn" class="btn ghost small" title="Cerrar sesión">Salir</button>
+      <button id="logout-btn" class="btn ghost small" title="Cerrar sesión">
+        <svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+        </svg>
+        <span class="hide-sm">Salir</span>
+      </button>
     </div>
   </header>
 
   <!-- Vista de Autenticación -->
   <main id="auth-view" class="auth-shell">
     <section class="auth-hero">
-      <div class="hero-tag">UPFIM · 7TIDG2 · Plataforma Académica Desambiguada</div>
-      <h1>Organiza tu semana escolar, mantén tu racha y chatea con tu asistente.</h1>
+      <div class="hero-tag">UPFIM · 7TIDG2 · Plataforma Académica</div>
+      <h1>Organiza tu semana escolar, mantén tu constancia y coordínate sin fricción.</h1>
       <p>
-        Registra tareas por materia, prioridad y fecha límite en horario local, recibe recordatorios internos
-        oportunos y consulta a tus docentes en tiempo real.
+        Registra entregas por asignatura, prioridad y horario local, recibe recordatorios oportunos
+        dentro de la plataforma y mantén comunicación directa con tus docentes.
       </p>
       <div class="demo-box">
-        <strong>Acceso rápido de demostración (contraseña: <code>Demo1234!</code>)</strong>
+        <div class="demo-box-label">Acceso rápido de demostración (clave: <code>Demo1234!</code>)</div>
         <div class="demo-actions">
           <button type="button" id="demo-student-btn" class="btn primary">Entrar como Estudiante</button>
           <button type="button" id="demo-teacher-btn" class="btn secondary">Entrar como Docente</button>
@@ -103,9 +128,9 @@
 
     <section class="auth-card">
       <div class="tabs" role="tablist">
-        <button type="button" class="tab-btn active" data-auth-tab="login">Iniciar Sesión</button>
-        <button type="button" class="tab-btn" data-auth-tab="register">Crear Cuenta</button>
-        <button type="button" class="tab-btn" data-auth-tab="recover">Recuperar Clave</button>
+        <button type="button" class="tab-btn active" data-auth-tab="login">Iniciar sesión</button>
+        <button type="button" class="tab-btn" data-auth-tab="register">Crear cuenta</button>
+        <button type="button" class="tab-btn" data-auth-tab="recover">Recuperar clave</button>
       </div>
 
       <div id="auth-alert" class="alert hidden" role="alert"></div>
@@ -134,8 +159,8 @@
           <input type="email" id="reg-email" required placeholder="nombre@upfim.edu.mx" />
         </label>
         <label>
-          Contraseña (mín. 6 caracteres)
-          <input type="password" id="reg-password" required minlength="6" placeholder="••••••••" />
+          Contraseña (mín. 8 caracteres, letras y números)
+          <input type="password" id="reg-password" required minlength="8" maxlength="128" placeholder="Ej. ClaveSegura1" />
         </label>
         <div class="form-row-2">
           <label>
@@ -149,6 +174,11 @@
             Grupo académico
             <select id="reg-group"></select>
           </label>
+          <label id="reg-teacher-code-wrap" class="hidden">
+            Código institucional docente *
+            <input type="password" id="reg-teacher-code" placeholder="UPFIM-DOCENTE-2026" autocomplete="off" />
+            <small class="muted">Demo institucional: <code>UPFIM-DOCENTE-2026</code></small>
+          </label>
         </div>
         <button type="submit" class="btn primary full">Crear cuenta e iniciar</button>
       </form>
@@ -160,11 +190,11 @@
             Ingresa tu correo registrado
             <input type="email" id="forgot-email" required placeholder="estudiante@upfim.edu.mx" />
           </label>
-          <button type="submit" class="btn secondary full">Enviar enlace de recuperación</button>
+          <button type="submit" class="btn secondary full">Generar enlace de recuperación</button>
         </form>
 
         <div id="demo-inbox-box" class="demo-inbox hidden">
-          <strong>Bandeja local segura (sin correo externo):</strong>
+          <strong>Bandeja local de verificación:</strong>
           <p id="demo-inbox-note"></p>
           <code id="demo-reset-token"></code>
         </div>
@@ -176,7 +206,7 @@
           </label>
           <label>
             Nueva contraseña
-            <input type="password" id="reset-new-password" required minlength="6" placeholder="Mínimo 6 caracteres" />
+            <input type="password" id="reset-new-password" required minlength="8" maxlength="128" placeholder="Mínimo 8 caracteres con letras y números" />
           </label>
           <button type="submit" class="btn primary full">Restablecer contraseña</button>
         </form>
@@ -194,35 +224,54 @@
         </div>
         <div class="toolbar-primary-actions">
           <div class="view-switcher" role="group" aria-label="Modo de visualización">
-            <button type="button" class="switch-btn active" data-view-mode="weekly">Vista Semanal</button>
-            <button type="button" class="switch-btn" data-view-mode="daily">Vista Diaria</button>
+            <button type="button" class="switch-btn active" data-view-mode="weekly">Semanal</button>
+            <button type="button" class="switch-btn" data-view-mode="daily">Diaria</button>
             <button type="button" class="switch-btn" data-view-mode="history">Historial</button>
           </div>
-          <button type="button" id="new-task-btn" class="btn primary">+ Nueva Tarea</button>
+          <button type="button" id="new-task-btn" class="btn primary">
+            <svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            <span>Nueva tarea</span>
+          </button>
         </div>
       </div>
 
       <div class="toolbar-filters">
         <div class="search-box">
-          <span aria-hidden="true">🔍</span>
+          <svg class="ui-icon search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"/><line x1="20" y1="20" x2="16.2" y2="16.2"/>
+          </svg>
           <input type="text" id="task-search-input" placeholder="Buscar tarea por palabra clave..." />
-          <button type="button" id="clear-search-btn" class="clear-x hidden" title="Limpiar búsqueda">✕</button>
+          <button type="button" id="clear-search-btn" class="clear-x hidden" title="Limpiar búsqueda" aria-label="Limpiar búsqueda">
+            <svg class="ui-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
         </div>
 
-        <select id="subject-filter-select" aria-label="Filtrar por materia">
+        <select id="subject-filter-select" data-select-icon="book" aria-label="Filtrar por materia">
           <option value="ALL">Todas las materias</option>
         </select>
 
-        <select id="sort-select" aria-label="Ordenar tareas">
-          <option value="due_at">Ordenar: Fecha de vencimiento</option>
-          <option value="priority">Ordenar: Por Prioridad</option>
+        <select id="sort-select" data-select-icon="sort" aria-label="Ordenar tareas">
+          <option value="due_at">Ordenar: Fecha límite</option>
+          <option value="priority">Ordenar: Prioridad</option>
         </select>
 
         <div id="week-nav" class="week-nav">
-          <button type="button" id="prev-week-btn" class="btn ghost small">◀ Semana ant.</button>
+          <button type="button" id="prev-week-btn" class="btn ghost icon-only" title="Semana anterior" aria-label="Semana anterior">
+            <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+          </button>
           <span id="week-range-label" class="week-label">Semana actual</span>
           <button type="button" id="today-week-btn" class="btn ghost small">Hoy</button>
-          <button type="button" id="next-week-btn" class="btn ghost small">Semana sig. ▶</button>
+          <button type="button" id="next-week-btn" class="btn ghost icon-only" title="Semana siguiente" aria-label="Semana siguiente">
+            <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </button>
         </div>
 
         <div id="history-month-wrap" class="hidden">
@@ -235,14 +284,27 @@
       <!-- Contenido principal: Tablero Semanal / Vista Diaria / Historial -->
       <section id="tasks-container" class="tasks-stage"></section>
 
-      <!-- Panel lateral compacto: Temporizador de Concentración Pomodoro (Causa #9 Ishikawa) -->
+      <!-- Panel lateral compacto: Temporizador de Concentración Pomodoro -->
       <aside class="focus-panel card">
         <div class="panel-head">
-          <h3>⏱️ Enfoque Pomodoro</h3>
-          <span class="chip-mini">Sin deriva</span>
+          <div class="panel-title-row">
+            <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>
+            </svg>
+            <h3>Enfoque Pomodoro</h3>
+          </div>
+          <span class="chip-mini">Activo</span>
         </div>
         <p id="timer-task-label" class="muted small-text">Selecciona "Enfocar" en una tarea o inicia un bloque libre.</p>
-        <div class="timer-display" id="timer-display">25:00</div>
+
+        <div class="timer-ring-wrap">
+          <svg class="timer-ring-svg" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="timer-ring-track" cx="60" cy="60" r="52" />
+            <circle id="timer-ring-progress" class="timer-ring-progress" cx="60" cy="60" r="52" />
+          </svg>
+          <div class="timer-display" id="timer-display">25:00</div>
+        </div>
+
         <div class="timer-presets">
           <button type="button" class="btn ghost small" data-timer-mins="25">25m Estudio</button>
           <button type="button" class="btn ghost small" data-timer-mins="5">5m Pausa</button>
@@ -250,8 +312,12 @@
         </div>
         <div class="timer-controls">
           <button type="button" id="timer-start-btn" class="btn primary full">Iniciar</button>
-          <button type="button" id="timer-pause-btn" class="btn secondary hidden">Pausar</button>
-          <button type="button" id="timer-reset-btn" class="btn ghost">Reiniciar</button>
+          <button type="button" id="timer-pause-btn" class="btn secondary full hidden">Pausar</button>
+          <button type="button" id="timer-reset-btn" class="btn ghost icon-only" title="Reiniciar reloj" aria-label="Reiniciar reloj">
+            <svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/>
+            </svg>
+          </button>
         </div>
       </aside>
     </div>
@@ -263,14 +329,14 @@
       <div>
         <h2>Portal Docente — Supervisión Académica</h2>
         <p class="muted">
-          Portal de consulta y orientación personalizada: permite revisar tareas registradas por grupo, materias,
-          horario del cuatrimestre y abrir chat privado con estudiantes. <strong>No incluye asignación de tareas ni captura de calificaciones (HU-46).</strong>
+          Espacio de seguimiento y orientación: consulta el avance por grupo, tus asignaturas e horarios del cuatrimestre
+          y conversa con estudiantes. <strong>Sin asignación de tareas ni captura de calificaciones.</strong>
         </p>
       </div>
       <div class="tabs compact" role="tablist">
-        <button type="button" class="tab-btn active" data-teacher-tab="groups">Supervisión por Grupo</button>
-        <button type="button" class="tab-btn" data-teacher-tab="subjects">Mis Materias</button>
-        <button type="button" class="tab-btn" data-teacher-tab="schedule">Mi Horario</button>
+        <button type="button" class="tab-btn active" data-teacher-tab="groups">Grupos</button>
+        <button type="button" class="tab-btn" data-teacher-tab="subjects">Mis materias</button>
+        <button type="button" class="tab-btn" data-teacher-tab="schedule">Mi horario</button>
       </div>
     </section>
 
@@ -284,24 +350,43 @@
 
   <!-- Ventana flotante minimizable del Asistente Inteligente (HU-38..HU-42) -->
   <div id="assistant-shell" class="assistant-shell hidden">
-    <button id="assistant-fab" class="assistant-fab" title="Abrir Asistente Académico Inteligente">
-      🤖 <span>Asistente IA</span>
+    <button id="assistant-fab" class="assistant-fab" title="Abrir Asistente Académico">
+      <svg class="ui-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/>
+        <path d="M19 16l.9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9L19 16z"/>
+      </svg>
+      <span>Asistente</span>
     </button>
 
     <section id="assistant-window" class="assistant-window hidden" aria-label="Asistente Virtual Inteligente">
       <header class="assistant-header">
-        <div>
-          <strong>🤖 Asistente Académico</strong>
-          <small>Organización y uso del sitio</small>
+        <div class="assistant-title-wrap">
+          <span class="assistant-badge-icon">
+            <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/>
+            </svg>
+          </span>
+          <div>
+            <strong>Asistente Académico</strong>
+            <small>Organización y uso del sitio</small>
+          </div>
         </div>
         <div class="assistant-head-actions">
-          <button type="button" id="assistant-clear-btn" class="icon-mini" title="Vaciar conversación">🗑️</button>
-          <button type="button" id="assistant-min-btn" class="icon-mini" title="Minimizar">➖</button>
+          <button type="button" id="assistant-clear-btn" class="icon-mini" title="Vaciar conversación" aria-label="Vaciar conversación">
+            <svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>
+            </svg>
+          </button>
+          <button type="button" id="assistant-min-btn" class="icon-mini" title="Minimizar" aria-label="Minimizar">
+            <svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </button>
         </div>
       </header>
       <div id="assistant-messages" class="assistant-messages"></div>
       <div class="assistant-quick">
-        <button type="button" class="quick-chip" data-quick-ask="¿Cómo me organizo con mis tareas pendientes?">Organizar mis tareas</button>
+        <button type="button" class="quick-chip" data-quick-ask="¿Cómo me organizo con mis tareas pendientes?">Organizar pendientes</button>
         <button type="button" class="quick-chip" data-quick-ask="¿Por cuál tarea debo empezar hoy?">¿Por cuál empiezo?</button>
         <button type="button" class="quick-chip" data-quick-ask="¿Cómo puedo filtrar las tareas por materia?">¿Cómo filtrar?</button>
       </div>
@@ -320,8 +405,12 @@
   <div id="task-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
     <div class="modal-card">
       <header class="modal-header">
-        <h3 id="task-modal-title">Nueva Tarea Académica</h3>
-        <button type="button" class="close-modal" data-close-modal="task-modal">✕</button>
+        <h3 id="task-modal-title">Nueva tarea académica</h3>
+        <button type="button" class="close-modal" data-close-modal="task-modal" aria-label="Cerrar">
+          <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </header>
       <form id="task-form" class="stack-md">
         <input type="hidden" id="task-edit-id" />
@@ -333,8 +422,7 @@
         <div class="form-row-2">
           <label>
             Asignatura / Materia *
-            <input type="text" id="task-subject-input" list="subject-suggestions" placeholder="Ej. Ingeniería de Software" />
-            <datalist id="subject-suggestions"></datalist>
+            <input type="text" id="task-subject-input" placeholder="Selecciona o escribe materia..." autocomplete="off" />
           </label>
           <label>
             Color de etiqueta
@@ -349,14 +437,14 @@
           <label>
             Prioridad
             <select id="task-priority-input">
-              <option value="high">Alta (30 pts)</option>
-              <option value="medium" selected>Media (20 pts)</option>
-              <option value="low">Baja (10 pts)</option>
+              <option value="high" data-dot-color="#dc2626">Alta (30 pts)</option>
+              <option value="medium" data-dot-color="#d97706" selected>Media (20 pts)</option>
+              <option value="low" data-dot-color="#059669">Baja (10 pts)</option>
             </select>
           </label>
         </div>
         <label>
-          Notas / Observaciones
+          Notas u observaciones
           <textarea id="task-desc-input" rows="3" placeholder="Enlaces, indicaciones o material de apoyo..."></textarea>
         </label>
         <div class="modal-actions">
@@ -372,12 +460,18 @@
     <div class="modal-card narrow">
       <header class="modal-header">
         <h3>Confirmar eliminación</h3>
-        <button type="button" class="close-modal" data-close-modal="delete-modal">✕</button>
+        <button type="button" class="close-modal" data-close-modal="delete-modal" aria-label="Cerrar">
+          <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </header>
-      <p>¿Deseas eliminar permanentemente la tarea <strong id="delete-task-name"></strong>? Esta acción no se puede deshacer.</p>
+      <p class="muted" style="margin:0 0 14px; line-height:1.5;">
+        ¿Deseas eliminar permanentemente la tarea <strong id="delete-task-name" style="color:var(--text)"></strong>? Esta acción no se puede deshacer.
+      </p>
       <div class="modal-actions">
         <button type="button" class="btn ghost" data-close-modal="delete-modal">Cancelar</button>
-        <button type="button" id="confirm-delete-btn" class="btn danger">Aceptar</button>
+        <button type="button" id="confirm-delete-btn" class="btn danger">Eliminar tarea</button>
       </div>
     </div>
   </div>
@@ -386,12 +480,16 @@
   <div id="streak-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
     <div class="modal-card wide">
       <header class="modal-header">
-        <h3>Personalizar Diseño de Racha</h3>
-        <button type="button" class="close-modal" data-close-modal="streak-modal">✕</button>
+        <h3>Personalizar diseño de racha</h3>
+        <button type="button" class="close-modal" data-close-modal="streak-modal" aria-label="Cerrar">
+          <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </header>
       <div class="streak-preview-box">
-        <small>Previsualización en vivo:</small>
-        <div id="streak-live-preview" class="streak-preview-pill">🔥 7 Días · 140 pts</div>
+        <small>Vista previa en tiempo real</small>
+        <div id="streak-live-preview" class="streak-preview-pill">7 Días · 140 pts</div>
       </div>
       <div id="streak-theme-alert" class="alert hidden"></div>
       <div id="streak-themes-grid" class="themes-grid"></div>
@@ -407,18 +505,22 @@
     <div class="modal-card chat-modal-card">
       <header class="modal-header">
         <div>
-          <h3>Chat Privado Académico</h3>
-          <small class="muted">Mensajería directa exclusivamente por texto plano (sin archivos ni video)</small>
+          <h3>Mensajes privados</h3>
+          <small class="muted">Comunicación directa por texto plano entre estudiante y docente</small>
         </div>
-        <button type="button" class="close-modal" data-close-modal="chat-modal">✕</button>
+        <button type="button" class="close-modal" data-close-modal="chat-modal" aria-label="Cerrar">
+          <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </header>
       <div class="chat-layout">
         <aside id="chat-contacts-list" class="chat-contacts"></aside>
         <section class="chat-thread-area">
-          <div id="chat-active-header" class="chat-thread-head">Selecciona una persona para conversar</div>
+          <div id="chat-active-header" class="chat-thread-head">Selecciona un contacto para conversar</div>
           <div id="chat-messages-box" class="chat-messages-box"></div>
           <form id="chat-send-form" class="chat-send-form">
-            <input type="text" id="chat-text-input" placeholder="Escribe un mensaje de texto..." disabled maxlength="2000" />
+            <input type="text" id="chat-text-input" placeholder="Escribe un mensaje..." disabled maxlength="2000" />
             <button type="submit" id="chat-send-btn" class="btn primary" disabled>Enviar</button>
           </form>
         </section>
@@ -426,36 +528,83 @@
     </div>
   </div>
 
-  <!-- Modal Perfil de Usuario (HU-05) -->
+  <!-- Modal Perfil de Usuario y Preferencias (HU-05) -->
   <div id="profile-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
-    <div class="modal-card">
+    <div class="modal-card wide">
       <header class="modal-header">
-        <h3>Configuración de Perfil</h3>
-        <button type="button" class="close-modal" data-close-modal="profile-modal">✕</button>
+        <h3>Configuración de cuenta</h3>
+        <button type="button" class="close-modal" data-close-modal="profile-modal" aria-label="Cerrar">
+          <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </header>
+
       <form id="profile-form" class="stack-md">
         <div id="profile-alert" class="alert hidden"></div>
-        <label>
-          Nombre completo
-          <input type="text" id="prof-name" required />
-        </label>
-        <label>
-          Correo electrónico
-          <input type="email" id="prof-email" required />
-        </label>
-        <label>
-          URL de foto de perfil (opcional)
-          <input type="url" id="prof-avatar" placeholder="https://..." />
-        </label>
-        <label id="prof-group-wrap">
-          Grupo asignado
-          <select id="prof-group"></select>
-        </label>
-        <div class="modal-actions">
-          <button type="button" class="btn ghost" data-close-modal="profile-modal">Cancelar</button>
-          <button type="submit" class="btn primary">Guardar cambios</button>
+        <div class="form-row-2">
+          <label>
+            Nombre completo
+            <input type="text" id="prof-name" required maxlength="120" />
+          </label>
+          <label>
+            Correo electrónico
+            <input type="email" id="prof-email" required maxlength="160" />
+          </label>
+        </div>
+        <div class="form-row-2">
+          <label>
+            URL de foto de perfil (opcional)
+            <input type="url" id="prof-avatar" placeholder="https://..." />
+          </label>
+          <label id="prof-group-wrap">
+            Grupo asignado
+            <select id="prof-group"></select>
+          </label>
+        </div>
+        <div class="modal-actions" style="justify-content:space-between; flex-wrap:wrap;">
+          <button type="button" id="export-user-data-btn" class="btn ghost small">
+            <svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            <span>Exportar mis datos</span>
+          </button>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="btn ghost" data-close-modal="profile-modal">Cerrar</button>
+            <button type="submit" class="btn primary">Guardar cambios</button>
+          </div>
         </div>
       </form>
+
+      <hr class="divider" />
+
+      <form id="change-password-form" class="stack-sm">
+        <h4 class="section-subhead">Cambiar contraseña</h4>
+        <div id="password-change-alert" class="alert hidden"></div>
+        <div class="form-row-2">
+          <label>
+            Contraseña actual
+            <input type="password" id="prof-current-password" required placeholder="••••••••" />
+          </label>
+          <label>
+            Nueva contraseña
+            <input type="password" id="prof-new-password" required minlength="8" maxlength="128" placeholder="Mín. 8 caracteres (letras y números)" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="btn secondary small">Actualizar contraseña</button>
+        </div>
+      </form>
+
+      <hr class="divider" />
+
+      <div class="stack-sm">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <h4 class="section-subhead">Dispositivos con sesión abierta</h4>
+          <button type="button" id="revoke-other-sessions-btn" class="btn ghost small">Cerrar otras sesiones</button>
+        </div>
+        <div id="active-sessions-list" class="sessions-list"></div>
+      </div>
     </div>
   </div>
 
@@ -464,15 +613,19 @@
     <div class="modal-card tutorial-card">
       <header class="modal-header">
         <span id="tutorial-step-badge" class="chip-mini">Paso 1 de 4</span>
-        <button type="button" id="tutorial-skip-x" class="close-modal" title="Omitir tutorial">✕</button>
+        <button type="button" id="tutorial-skip-x" class="close-modal" title="Omitir guía" aria-label="Omitir guía">
+          <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </header>
       <div class="tutorial-body">
-        <div id="tutorial-icon" class="tutorial-icon">📅</div>
+        <div id="tutorial-icon" class="tutorial-icon"></div>
         <h3 id="tutorial-title">Bienvenido</h3>
         <p id="tutorial-desc"></p>
       </div>
       <div class="tutorial-footer">
-        <button type="button" id="tutorial-skip-btn" class="btn ghost">Omitir tutorial</button>
+        <button type="button" id="tutorial-skip-btn" class="btn ghost">Omitir</button>
         <div class="tutorial-nav">
           <button type="button" id="tutorial-prev-btn" class="btn secondary">Anterior</button>
           <button type="button" id="tutorial-next-btn" class="btn primary">Siguiente</button>

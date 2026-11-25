@@ -1,43 +1,44 @@
 import { apiFetch } from './api.js';
+import { iconSvg } from './icons.js';
 
 const STUDENT_STEPS = [
   {
-    icon: '📅',
-    title: 'Agenda Semanal y Diaria',
-    desc: 'Organiza tus entregas de Lunes a Domingo con etiquetas por materia, prioridad (Alta, Media, Baja) y notas detalladas. Usa los filtros o el buscador para encontrar cualquier pendiente al instante.'
+    icon: 'calendar',
+    title: 'Agenda semanal y diaria',
+    desc: 'Organiza tus entregas de Lunes a Domingo con etiquetas por asignatura, prioridad y notas detalladas. Utiliza los selectores superiores o el buscador para filtrar al instante.'
   },
   {
-    icon: '🔥',
-    title: 'Racha de Cumplimiento y Temas',
-    desc: 'Ingresa cada día para sumar +1 día consecutivo y completa tareas antes de su fecha límite para acumular puntos. Haz clic en el widget de llama en la barra superior para personalizar su diseño.'
+    icon: 'flame',
+    title: 'Racha de cumplimiento y estilos',
+    desc: 'Ingresa cada día para sumar constancia y completa entregas antes de su fecha límite para obtener puntos. Pulsa el indicador de racha en la barra superior para personalizar su diseño.'
   },
   {
-    icon: '🤖',
-    title: 'Asistente Académico Inteligente',
-    desc: 'Abre la burbuja inferior derecha para pedir planes de organización o ayuda sobre el uso del sitio. Recuerda que está diseñado para guiarte en tu estudio, no para resolver ejercicios escolares.'
+    icon: 'sparkles',
+    title: 'Asistente académico',
+    desc: 'Abre el botón inferior derecho para solicitar planes de estudio sobre tus entregas pendientes o ayuda de navegación. Está enfocado en tu organización, sin resolver tareas escolares.'
   },
   {
-    icon: '💬',
-    title: 'Recordatorios Internos y Chat Docente',
-    desc: 'Recibirás alertas dentro del sitio cuando una entrega esté próxima a vencer (puedes posponerlas 1 hora). Si tienes dudas académicas personales, escribe por texto plano a tu docente en Mensajes.'
+    icon: 'message',
+    title: 'Recordatorios y mensajes directos',
+    desc: 'Recibirás avisos internos cuando una actividad esté próxima a vencer (con opción de posponer 1 hora) y podrás conversar por texto plano con tus docentes.'
   }
 ];
 
 const TEACHER_STEPS = [
   {
-    icon: '👥',
-    title: 'Supervisión por Grupo',
-    desc: 'Selecciona cualquiera de tus grupos académicos para visualizar el porcentaje general de cumplimiento y consultar el expediente de tareas registradas por cada estudiante (modo exclusiva consulta).'
+    icon: 'users',
+    title: 'Supervisión por grupo',
+    desc: 'Selecciona tus grupos asignados para visualizar el porcentaje general de cumplimiento y consultar el expediente de actividades registradas por cada estudiante.'
   },
   {
-    icon: '📚',
-    title: 'Mis Materias y Horario Cuatrimestral',
-    desc: 'Consulta tus asignaturas asignadas, carga horaria y el cuadrante semanal de Lunes a Viernes. Haz clic en cualquier bloque horario para ver el aula y edificio asignado.'
+    icon: 'book',
+    title: 'Asignaturas y horario cuatrimestral',
+    desc: 'Consulta tus materias, carga horaria y el cuadrante semanal de Lunes a Viernes. Haz clic en cualquier bloque horario para ver el aula y edificio asignado.'
   },
   {
-    icon: '💬',
-    title: 'Chat Privado con Estudiantes',
-    desc: 'Desde el directorio de alumnos o el botón Mensajes de la barra superior puedes iniciar conversaciones privadas por texto plano para resolver dudas puntuales en tiempo real.'
+    icon: 'message',
+    title: 'Mensajes privados con estudiantes',
+    desc: 'Desde el listado de alumnos o el botón Mensajes de la barra superior puedes iniciar conversaciones privadas por texto plano en tiempo real.'
   }
 ];
 
@@ -57,7 +58,7 @@ const skipX = document.getElementById('tutorial-skip-x');
 function renderStep() {
   const step = activeSteps[currentStep];
   stepBadge.textContent = `Paso ${currentStep + 1} de ${activeSteps.length}`;
-  iconEl.textContent = step.icon;
+  iconEl.innerHTML = iconSvg(step.icon, { size: 24 });
   titleEl.textContent = step.title;
   descEl.textContent = step.desc;
   prevBtn.disabled = currentStep === 0;

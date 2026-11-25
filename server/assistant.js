@@ -52,7 +52,7 @@ function buildPlatformHelpReply(lower) {
       'Para **filtrar o buscar tareas por materia**, sigue estos pasos:',
       '• En la barra de herramientas del tablero principal, abre el menú desplegable **"Todas las materias"** y selecciona la asignatura que deseas revisar.',
       '• También puedes hacer **clic directo sobre la etiqueta de color** de cualquier materia dentro de una tarjeta de tarea para filtrar al instante.',
-      '• Si buscas una actividad concreta, escribe una palabra clave en la **barra de búsqueda** (usa el icono `✕` para restablecer la vista).'
+      '• Si buscas una actividad concreta, escribe una palabra clave en la **barra de búsqueda** (usa el botón de limpiar para restablecer la vista).'
     ].join('\n');
   }
 

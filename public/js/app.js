@@ -1,5 +1,6 @@
 import {
   apiFetch,
+  escapeHtml,
   getStoredToken,
   setOnSessionExpired,
   setStoredToken
@@ -12,6 +13,7 @@ import { initStudentHandlers, loadStudentTasks } from './student.js';
 import { initTeacherHandlers, loadTeacherPortal } from './teacher.js';
 import { initPomodoroTimer } from './timer.js';
 import { initTutorialHandlers, openTutorial } from './tutorial.js';
+import { closeAllPopovers, enhanceAllSelects } from './ui.js';
 
 let currentUser = null;
 let eventSource = null;
@@ -29,6 +31,8 @@ const recoverPanel = document.getElementById('recover-panel');
 const regRoleSelect = document.getElementById('reg-role');
 const regGroupWrap = document.getElementById('reg-group-wrap');
 const regGroupSelect = document.getElementById('reg-group');
+const regTeacherCodeWrap = document.getElementById('reg-teacher-code-wrap');
+const regTeacherCodeInput = document.getElementById('reg-teacher-code');
 
 const userRoleBadge = document.getElementById('user-role-badge');
 const userAvatarChip = document.getElementById('user-avatar-chip');
@@ -45,6 +49,9 @@ const profEmail = document.getElementById('prof-email');
 const profAvatar = document.getElementById('prof-avatar');
 const profGroup = document.getElementById('prof-group');
 const profGroupWrap = document.getElementById('prof-group-wrap');
+const activeSessionsList = document.getElementById('active-sessions-list');
+const changePasswordForm = document.getElementById('change-password-form');
+const passwordChangeAlert = document.getElementById('password-change-alert');
 
 function showAuthAlert(msg, type = 'error') {
   authAlert.textContent = msg;
@@ -56,6 +63,23 @@ function clearAuthAlert() {
   authAlert.classList.add('hidden');
 }
 
+function renderAvatarSafely(user) {
+  userAvatarChip.textContent = '';
+  const initial = (user.name || 'U').charAt(0).toUpperCase();
+  if (user.avatarUrl) {
+    const img = document.createElement('img');
+    img.src = user.avatarUrl;
+    img.alt = 'Foto de perfil';
+    img.referrerPolicy = 'no-referrer';
+    img.addEventListener('error', () => {
+      userAvatarChip.textContent = initial;
+    });
+    userAvatarChip.appendChild(img);
+  } else {
+    userAvatarChip.textContent = initial;
+  }
+}
+
 function updateTopbarUser(user) {
   currentUser = user;
   userNameLabel.textContent = user.name;
@@ -64,30 +88,38 @@ function updateTopbarUser(user) {
       ? 'Portal Docente'
       : `Estudiante · Grupo ${user.groupName || 'Sin grupo'}`;
 
-  if (user.avatarUrl) {
-    userAvatarChip.innerHTML = `<img src="${user.avatarUrl}" alt="Foto" />`;
-  } else {
-    userAvatarChip.textContent = (user.name || 'U').charAt(0).toUpperCase();
-  }
+  renderAvatarSafely(user);
 
   if (user.role === 'student') {
     studentGroupSubtitle.textContent = `Grupo ${user.groupName || 'General'} · ${user.groupProgram || 'UPFIM'}`;
   }
 }
 
-function connectSse(token) {
+async function connectSse() {
   if (eventSource) {
     eventSource.close();
     eventSource = null;
   }
-  eventSource = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
+
+  let sseUrl = '/api/events';
+  try {
+    const ticketRes = await apiFetch('/api/events/ticket', { method: 'POST' });
+    if (ticketRes.ticket) {
+      sseUrl = `/api/events?ticket=${encodeURIComponent(ticketRes.ticket)}`;
+    }
+  } catch {
+    // Respaldo transparente con sesión por cookie
+  }
+
+  eventSource = new EventSource(sseUrl);
   eventSource.addEventListener('private_message', (ev) => {
     const payload = JSON.parse(ev.data);
     handleIncomingPrivateMessage(payload);
     showToast({
-      title: `💬 Nuevo mensaje de ${payload.senderName}`,
+      title: `Nuevo mensaje de ${payload.senderName}`,
       body: payload.message.content.slice(0, 90),
       variant: 'info',
+      icon: 'message',
       autoCloseMs: 7000
     });
   });
@@ -98,6 +130,7 @@ function connectSse(token) {
 }
 
 function switchToAuthScreen(expiredMsg = '') {
+  closeAllPopovers();
   currentUser = null;
   if (eventSource) {
     eventSource.close();
@@ -115,13 +148,14 @@ function switchToAuthScreen(expiredMsg = '') {
 }
 
 async function enterAuthenticatedApp(user, { unreadMessages = 0, streakEvent = null, isFreshLogin = false } = {}) {
+  closeAllPopovers();
   updateTopbarUser(user);
   setChatUserId(user.id);
   updateUnreadBadge(unreadMessages);
 
   authView.classList.add('hidden');
   topbar.classList.remove('hidden');
-  connectSse(getStoredToken());
+  await connectSse();
 
   if (user.role === 'teacher') {
     studentView.classList.add('hidden');
@@ -139,9 +173,10 @@ async function enterAuthenticatedApp(user, { unreadMessages = 0, streakEvent = n
 
     if (streakEvent && streakEvent.message) {
       showToast({
-        title: streakEvent.status === 'reset' ? '🔄 Ciclo de racha reiniciado' : '🔥 Racha actualizada',
+        title: streakEvent.status === 'reset' ? 'Ciclo de racha reiniciado' : 'Racha actualizada',
         body: streakEvent.message,
         variant: streakEvent.status === 'reset' ? 'warning' : 'success',
+        icon: 'flame',
         autoCloseMs: 9000
       });
     }
@@ -157,7 +192,7 @@ async function loadGroupsCatalog() {
   try {
     const { groups } = await apiFetch('/api/groups');
     const html = (groups || [])
-      .map((g) => `<option value="${g.id}">${g.name} — ${g.program}</option>`)
+      .map((g) => `<option value="${Number(g.id)}">${escapeHtml(g.name)} — ${escapeHtml(g.program)}</option>`)
       .join('');
     regGroupSelect.innerHTML = html;
     profGroup.innerHTML = html;
@@ -183,7 +218,17 @@ async function performLogin(email, password) {
 function initModalClosers() {
   document.querySelectorAll('[data-close-modal]').forEach((btn) => {
     btn.addEventListener('click', () => {
+      closeAllPopovers();
       document.getElementById(btn.dataset.closeModal)?.classList.add('hidden');
+    });
+  });
+
+  document.querySelectorAll('.modal-backdrop').forEach((backdrop) => {
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) {
+        closeAllPopovers();
+        backdrop.classList.add('hidden');
+      }
     });
   });
 }
@@ -192,6 +237,7 @@ function initAuthHandlers() {
   const tabs = document.querySelectorAll('[data-auth-tab]');
   tabs.forEach((btn) => {
     btn.addEventListener('click', () => {
+      closeAllPopovers();
       clearAuthAlert();
       tabs.forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
@@ -203,7 +249,10 @@ function initAuthHandlers() {
   });
 
   regRoleSelect.addEventListener('change', () => {
-    regGroupWrap.classList.toggle('hidden', regRoleSelect.value === 'teacher');
+    const isTeacher = regRoleSelect.value === 'teacher';
+    regGroupWrap.classList.toggle('hidden', isTeacher);
+    regTeacherCodeWrap.classList.toggle('hidden', !isTeacher);
+    regTeacherCodeInput.required = isTeacher;
   });
 
   loginForm.addEventListener('submit', async (e) => {
@@ -230,7 +279,8 @@ function initAuthHandlers() {
           email: document.getElementById('reg-email').value,
           password: document.getElementById('reg-password').value,
           role,
-          groupId: role === 'student' ? Number(regGroupSelect.value) : null
+          groupId: role === 'student' ? Number(regGroupSelect.value) : null,
+          teacherCode: role === 'teacher' ? regTeacherCodeInput.value : undefined
         }
       });
       setStoredToken(data.token);
@@ -275,6 +325,8 @@ function initAuthHandlers() {
         document.getElementById('demo-inbox-note').textContent = res.demoInbox.note;
         document.getElementById('demo-reset-token').textContent = res.demoInbox.resetToken;
         document.getElementById('reset-token-input').value = res.demoInbox.resetToken;
+      } else {
+        inbox.classList.add('hidden');
       }
     } catch (err) {
       showAuthAlert(err.message, 'error');
@@ -300,6 +352,31 @@ function initAuthHandlers() {
   });
 }
 
+async function loadActiveSessionsUI() {
+  try {
+    const { sessions } = await apiFetch('/api/auth/sessions');
+    if (!sessions || sessions.length === 0) {
+      activeSessionsList.innerHTML = '<div class="small-text muted">Sin sesiones registradas.</div>';
+      return;
+    }
+    activeSessionsList.innerHTML = sessions
+      .map(
+        (s) => `
+        <div class="session-row">
+          <div>
+            <strong>${escapeHtml(s.userAgent)}</strong>
+            <div class="muted" style="font-size:0.74rem;">Actividad reciente: ${escapeHtml(s.lastActivityAt.slice(0, 19).replace('T', ' '))}</div>
+          </div>
+          ${s.isCurrent ? '<span class="chip-mini">Este equipo</span>' : '<span class="badge neutral">Activa</span>'}
+        </div>
+      `
+      )
+      .join('');
+  } catch {
+    activeSessionsList.innerHTML = '<div class="small-text muted">No se pudieron consultar las sesiones.</div>';
+  }
+}
+
 function initProfileAndTopbarHandlers() {
   document.getElementById('logout-btn').addEventListener('click', async () => {
     try {
@@ -315,15 +392,17 @@ function initProfileAndTopbarHandlers() {
     openTutorial(currentUser?.role || 'student');
   });
 
-  document.getElementById('open-profile-btn').addEventListener('click', () => {
+  document.getElementById('open-profile-btn').addEventListener('click', async () => {
     if (!currentUser) return;
     profileAlert.classList.add('hidden');
+    passwordChangeAlert.classList.add('hidden');
     profName.value = currentUser.name;
     profEmail.value = currentUser.email;
     profAvatar.value = currentUser.avatarUrl || '';
     profGroupWrap.classList.toggle('hidden', currentUser.role !== 'student');
     if (currentUser.groupId) profGroup.value = String(currentUser.groupId);
     profileModal.classList.remove('hidden');
+    await loadActiveSessionsUI();
   });
 
   profileForm.addEventListener('submit', async (e) => {
@@ -340,9 +419,72 @@ function initProfileAndTopbarHandlers() {
         }
       });
       updateTopbarUser(res.user);
+      closeAllPopovers();
       profileModal.classList.add('hidden');
       if (res.user.role === 'student') await loadStudentTasks();
-      showToast({ title: 'Perfil actualizado', body: 'Tus datos personales se guardaron correctamente.', variant: 'success', autoCloseMs: 5000 });
+      showToast({
+        title: 'Perfil actualizado',
+        body: 'Tus datos personales se guardaron correctamente.',
+        variant: 'success',
+        autoCloseMs: 5000
+      });
+    } catch (err) {
+      profileAlert.className = 'alert error';
+      profileAlert.textContent = err.message;
+      profileAlert.classList.remove('hidden');
+    }
+  });
+
+  changePasswordForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    passwordChangeAlert.classList.add('hidden');
+    try {
+      const res = await apiFetch('/api/auth/change-password', {
+        method: 'POST',
+        body: {
+          currentPassword: document.getElementById('prof-current-password').value,
+          newPassword: document.getElementById('prof-new-password').value
+        }
+      });
+      changePasswordForm.reset();
+      passwordChangeAlert.className = 'alert success';
+      passwordChangeAlert.textContent = res.message;
+      passwordChangeAlert.classList.remove('hidden');
+      await loadActiveSessionsUI();
+    } catch (err) {
+      passwordChangeAlert.className = 'alert error';
+      passwordChangeAlert.textContent = err.message;
+      passwordChangeAlert.classList.remove('hidden');
+    }
+  });
+
+  document.getElementById('revoke-other-sessions-btn').addEventListener('click', async () => {
+    try {
+      const res = await apiFetch('/api/auth/sessions/others', { method: 'DELETE' });
+      await loadActiveSessionsUI();
+      showToast({
+        title: 'Sesiones actualizadas',
+        body: `Se cerraron ${res.closedCount} sesiones adicionales.`,
+        variant: 'info',
+        autoCloseMs: 5000
+      });
+    } catch (err) {
+      showToast({ title: 'Error', body: err.message, variant: 'danger', autoCloseMs: 5000 });
+    }
+  });
+
+  document.getElementById('export-user-data-btn').addEventListener('click', async () => {
+    try {
+      const bundle = await apiFetch('/api/profile/export');
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `respaldo-upfim-${currentUser?.id || 'usuario'}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     } catch (err) {
       profileAlert.className = 'alert error';
       profileAlert.textContent = err.message;
@@ -359,6 +501,9 @@ async function bootstrap() {
   setOnSessionExpired((msg) => switchToAuthScreen(msg));
   setStreakUserUpdateCallback((user) => updateTopbarUser(user));
 
+  // Reemplazar todos los <select> estáticos por menús propios de la app web
+  enhanceAllSelects(document);
+
   initModalClosers();
   initAuthHandlers();
   initProfileAndTopbarHandlers();
@@ -372,15 +517,12 @@ async function bootstrap() {
 
   await loadGroupsCatalog();
 
-  const token = getStoredToken();
-  if (token) {
-    try {
-      const data = await apiFetch('/api/auth/me');
-      await enterAuthenticatedApp(data.user, { unreadMessages: data.unreadMessages, isFreshLogin: false });
-      return;
-    } catch {
-      setStoredToken('');
-    }
+  try {
+    const data = await apiFetch('/api/auth/me');
+    await enterAuthenticatedApp(data.user, { unreadMessages: data.unreadMessages, isFreshLogin: false });
+    return;
+  } catch {
+    if (getStoredToken()) setStoredToken('');
   }
   switchToAuthScreen();
 }

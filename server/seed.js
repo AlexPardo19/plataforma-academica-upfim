@@ -1,5 +1,11 @@
 import { hashPassword } from './auth.js';
-import { addCalendarDays, DEFAULT_TIMEZONE, getLocalDateString, getLocalDateTimeString } from './db.js';
+import {
+  addCalendarDays,
+  appendAuditLog,
+  DEFAULT_TIMEZONE,
+  getLocalDateString,
+  getLocalDateTimeString
+} from './db.js';
 
 /**
  * Inserta datos semilla académicos (grupos UPFIM, docente, alumnos, materias, horario, tareas y chats)
@@ -286,16 +292,14 @@ export function seedDatabaseIfEmpty(db, timeZone = DEFAULT_TIMEZONE) {
     nowIso
   );
 
-  // 6. Mensaje inicial en chat privado Docente -> Alumno
+  // 6. Mensaje inicial en chat privado Docente -> Alumno (cifrado en reposo AES-256-GCM)
+  const rawWelcomeChat =
+    'Hola Heidy, recuerda revisar las fechas límite de tus entregas de esta semana. Si tienes alguna duda de organización puedes escribirme por aquí.';
+  const storedWelcomeChat = db.vault ? db.vault.encrypt(rawWelcomeChat) : rawWelcomeChat;
   db.prepare(
     `INSERT INTO private_messages (sender_id, receiver_id, content, is_read, created_at)
      VALUES (?, ?, ?, 0, ?)`
-  ).run(
-    teacherId,
-    student1Id,
-    'Hola Heidy, recuerda revisar las fechas límite de tus entregas de esta semana. Si tienes alguna duda de organización puedes escribirme por aquí.',
-    nowIso
-  );
+  ).run(teacherId, student1Id, storedWelcomeChat, nowIso);
 
   // 7. Saludo inicial del Asistente Inteligente
   db.prepare(
@@ -306,4 +310,12 @@ export function seedDatabaseIfEmpty(db, timeZone = DEFAULT_TIMEZONE) {
     '¡Hola! Soy tu Asistente Académico Inteligente. Puedo ayudarte a organizar tus tareas por prioridad, explicarte cómo usar los filtros, rachas o el portal, y planear tus bloques de estudio. (Nota: no resuelvo ejercicios ni contenidos de tus materias).',
     nowIso
   );
+
+  appendAuditLog(db, {
+    userId: null,
+    action: 'SYSTEM_SEED_INITIALIZED',
+    severity: 'info',
+    ipAddress: '127.0.0.1',
+    details: { groups: 2, users: 4, encryptedPrivateMessages: true }
+  });
 }

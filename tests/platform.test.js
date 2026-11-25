@@ -409,3 +409,218 @@ test('HU-43..HU-50: Portal Docente (exclusiva consulta) y Chat Privado texto pla
     await app.close();
   }
 });
+
+test('BLINDAJE-01: SQLite 3 PRAGMAs, sesiones SHA-256, cifrado AES-256-GCM en reposo y bitácora inmutable', async () => {
+  const app = await startTestServer();
+  try {
+    const teacherLogin = await app.api('/api/auth/login', {
+      method: 'POST',
+      body: { email: 'daniel.hernandez@upfim.edu.mx', password: 'Demo1234!' }
+    });
+    assert.equal(teacherLogin.status, 200);
+    const rawToken = teacherLogin.data.token;
+
+    // 1. Ningún token de sesión en claro se almacena en SQLite 3 (solo token_hash SHA-256)
+    const rawMatch = app.db.prepare('SELECT COUNT(*) AS count FROM sessions WHERE token_hash = ?').get(rawToken);
+    assert.equal(rawMatch.count, 0);
+    const activeSessions = app.db.prepare('SELECT token_hash FROM sessions').all();
+    assert.ok(activeSessions.length >= 1);
+    assert.equal(activeSessions[0].token_hash.length, 64);
+
+    // 2. Mensajes privados almacenados cifrados con AES-256-GCM en disco y descifrados transparentemente por API
+    const studentRow = app.db.prepare("SELECT id FROM users WHERE email = 'estudiante@upfim.edu.mx'").get();
+    const secretText = 'Retroalimentación confidencial cifrada en SQLite 3.';
+    const sent = await app.api(`/api/messages/${studentRow.id}`, {
+      method: 'POST',
+      token: teacherLogin.data.token,
+      body: { content: secretText }
+    });
+    assert.equal(sent.status, 201);
+    assert.equal(sent.data.message.content, secretText);
+
+    const diskRow = app.db
+      .prepare('SELECT content FROM private_messages WHERE id = ?')
+      .get(sent.data.message.id);
+    assert.ok(diskRow.content.startsWith('enc:v1:'), 'El contenido en SQLite debe estar cifrado con AES-256-GCM');
+    assert.ok(!diskRow.content.includes('Retroalimentación'), 'El texto plano no debe aparecer en disco');
+
+    // 3. Bitácora audit_logs inmutable (triggers BEFORE UPDATE y BEFORE DELETE bloquean manipulación SQL directa)
+    assert.throws(() => {
+      app.db.exec("DELETE FROM audit_logs WHERE id = 1;");
+    }, /inmutable|eliminar/i);
+    assert.throws(() => {
+      app.db.exec("UPDATE audit_logs SET action = 'HACKED' WHERE id = 1;");
+    }, /inmutable/i);
+
+    // 4. Diagnóstico de blindaje y respaldo atómico VACUUM INTO
+    const statusRes = await app.api('/api/security/status', { token: rawToken });
+    assert.equal(statusRes.status, 200);
+    assert.equal(statusRes.data.integrityOk, true);
+    assert.equal(statusRes.data.pragmas.journalMode, 'wal');
+    assert.equal(statusRes.data.pragmas.foreignKeys, true);
+    assert.equal(statusRes.data.pragmas.secureDelete, true);
+    assert.equal(statusRes.data.encryption.allEncryptedAtRest, true);
+    assert.equal(statusRes.data.auditChain.ok, true);
+
+    const backupRes = await app.api('/api/security/backup', { method: 'POST', token: rawToken });
+    assert.equal(backupRes.status, 201);
+    assert.ok(backupRes.data.backup.fileName.endsWith('.sqlite'));
+    assert.ok(backupRes.data.backup.sizeBytes > 0);
+  } finally {
+    await app.close();
+  }
+});
+
+test('BLINDAJE-02: Anti-escalación de rol, bloqueo por fuerza bruta, aislamiento IDOR, anti-XSS/CSS y anti-farming', async () => {
+  const app = await startTestServer({ teacherAccessCode: 'CLAVE-INST-TEST' });
+  try {
+    // 1. Bloqueo de escalación de privilegios al intentar registrarse como docente sin código institucional
+    const fakeTeacher = await app.api('/api/auth/register', {
+      method: 'POST',
+      body: {
+        name: 'Intruso Docente',
+        email: 'intruso@upfim.edu.mx',
+        password: 'ClaveFuerte1',
+        role: 'teacher'
+      }
+    });
+    assert.equal(fakeTeacher.status, 403);
+
+    // Registro legítimo de un nuevo docente con código válido (sin grupos asignados aún)
+    const validTeacher = await app.api('/api/auth/register', {
+      method: 'POST',
+      body: {
+        name: 'Mtra. Laura Soto',
+        email: 'laura.soto@upfim.edu.mx',
+        password: 'ClaveFuerte1',
+        role: 'teacher',
+        teacherCode: 'CLAVE-INST-TEST'
+      }
+    });
+    assert.equal(validTeacher.status, 201);
+    const newTeacherToken = validTeacher.data.token;
+
+    // 2. Aislamiento horizontal (anti-IDOR): docente sin materias en el grupo 7TIDG2 no puede espiar expedientes ajenos
+    const studentRow = app.db.prepare("SELECT id, group_id FROM users WHERE email = 'estudiante@upfim.edu.mx'").get();
+    const idorDossier = await app.api(`/api/teacher/students/${studentRow.id}/tasks`, {
+      token: newTeacherToken
+    });
+    assert.equal(idorDossier.status, 403);
+
+    const idorChat = await app.api(`/api/messages/${studentRow.id}`, {
+      method: 'POST',
+      token: newTeacherToken,
+      body: { content: 'Intento de contacto fuera de grupo' }
+    });
+    assert.equal(idorChat.status, 403);
+
+    // 3. Prevención de XSS en avatarUrl e inyección CSS en colores y fechas calendario imposibles
+    const studentLogin = await app.api('/api/auth/login', {
+      method: 'POST',
+      body: { email: 'estudiante@upfim.edu.mx', password: 'Demo1234!' }
+    });
+    const studentToken = studentLogin.data.token;
+
+    const xssAvatar = await app.api('/api/profile', {
+      method: 'PUT',
+      token: studentToken,
+      body: {
+        name: 'Heidy Areli Hernández',
+        email: 'estudiante@upfim.edu.mx',
+        avatarUrl: 'https://evil.test/x" onerror="alert(1)'
+      }
+    });
+    assert.equal(xssAvatar.status, 400);
+
+    const cssInjectionTask = await app.api('/api/tasks', {
+      method: 'POST',
+      token: studentToken,
+      body: {
+        title: 'Tarea maliciosa',
+        subjectName: 'Seguridad',
+        subjectColor: '#ff0000; position:fixed; inset:0',
+        dueAt: '2027-05-10T12:00',
+        priority: 'high'
+      }
+    });
+    assert.equal(cssInjectionTask.status, 400);
+
+    const impossibleDateTask = await app.api('/api/tasks', {
+      method: 'POST',
+      token: studentToken,
+      body: {
+        title: 'Fecha inexistente',
+        subjectName: 'Seguridad',
+        subjectColor: '#4f46e5',
+        dueAt: '2027-02-31T12:00',
+        priority: 'high'
+      }
+    });
+    assert.equal(impossibleDateTask.status, 400);
+
+    // 4. Anti-farming: completar tarea hoy (+30 pts) y eliminarla revierte los puntos otorgados
+    const ptsBefore = (await app.api('/api/streak', { token: studentToken })).data.streakPoints;
+    const tomorrow = addCalendarDays(getLocalDateString(TZ), 1);
+    const farmTask = await app.api('/api/tasks', {
+      method: 'POST',
+      token: studentToken,
+      body: {
+        title: 'Intento farming puntos',
+        subjectName: 'Seguridad',
+        subjectColor: '#4f46e5',
+        dueAt: `${tomorrow}T20:00`,
+        priority: 'high'
+      }
+    });
+    const farmId = farmTask.data.task.id;
+    await app.api(`/api/tasks/${farmId}/toggle`, { method: 'PATCH', token: studentToken });
+    const delFarm = await app.api(`/api/tasks/${farmId}`, { method: 'DELETE', token: studentToken });
+    assert.equal(delFarm.data.revertedPoints, 30);
+    const ptsAfter = (await app.api('/api/streak', { token: studentToken })).data.streakPoints;
+    assert.equal(ptsAfter, ptsBefore);
+
+    // 5. Detección de traslape de horarios docentes
+    const mainTeacherLogin = await app.api('/api/auth/login', {
+      method: 'POST',
+      body: { email: 'daniel.hernandez@upfim.edu.mx', password: 'Demo1234!' }
+    });
+    const tSubs = await app.api('/api/teacher/subjects', { token: mainTeacherLogin.data.token });
+    const overlapSchedule = await app.api('/api/teacher/schedule', {
+      method: 'POST',
+      token: mainTeacherLogin.data.token,
+      body: {
+        subjectId: tSubs.data.subjects[0].id,
+        dayOfWeek: 1,
+        startTime: '08:30',
+        endTime: '09:30',
+        classroom: 'Aula 999',
+        building: 'Edificio Docencia II'
+      }
+    });
+    assert.equal(overlapSchedule.status, 409);
+
+    // 6. Bloqueo temporal de cuenta tras 5 intentos fallidos de contraseña
+    for (let i = 0; i < 4; i++) {
+      const attempt = await app.api('/api/auth/login', {
+        method: 'POST',
+        body: { email: 'carlos.mendez@upfim.edu.mx', password: 'WrongPassword1' }
+      });
+      assert.equal(attempt.status, 401);
+    }
+    const fifthAttempt = await app.api('/api/auth/login', {
+      method: 'POST',
+      body: { email: 'carlos.mendez@upfim.edu.mx', password: 'WrongPassword1' }
+    });
+    assert.equal(fifthAttempt.status, 423);
+    assert.equal(fifthAttempt.data.code, 'ACCOUNT_LOCKED');
+
+    // Incluso con la contraseña correcta queda bloqueada durante la ventana de seguridad
+    const lockedEvenCorrect = await app.api('/api/auth/login', {
+      method: 'POST',
+      body: { email: 'carlos.mendez@upfim.edu.mx', password: 'Demo1234!' }
+    });
+    assert.equal(lockedEvenCorrect.status, 423);
+  } finally {
+    await app.close();
+  }
+});

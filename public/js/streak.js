@@ -1,4 +1,18 @@
 import { apiFetch, escapeHtml } from './api.js';
+import { iconSvg } from './icons.js';
+
+const THEME_ICON_BY_ID = {
+  classic: 'flame',
+  emerald: 'leaf',
+  violet: 'zap',
+  arctic: 'snowflake',
+  golden: 'crown',
+  cosmic: 'sparkles'
+};
+
+function resolveThemeIcon(theme) {
+  return THEME_ICON_BY_ID[theme?.id] || theme?.icon || 'flame';
+}
 
 let cachedStreak = null;
 let previewThemeId = 'classic';
@@ -35,7 +49,7 @@ export async function refreshStreakWidget() {
 
     widgetWrap.classList.remove('hidden');
     pillBtn.style.background = activeTheme.gradient;
-    pillIcon.textContent = activeTheme.icon;
+    pillIcon.innerHTML = iconSvg(resolveThemeIcon(activeTheme), { size: 15 });
     pillText.textContent = `${data.streakDays} ${data.streakDays === 1 ? 'Día' : 'Días'}`;
     pillPts.textContent = `${data.streakPoints} pts`;
 
@@ -53,7 +67,7 @@ function renderPreview(themeId) {
   if (!cachedStreak) return;
   const theme = cachedStreak.themes.find((t) => t.id === themeId) || cachedStreak.themes[0];
   livePreview.style.background = theme.gradient;
-  livePreview.textContent = `${theme.icon} ${cachedStreak.streakDays} Días · ${cachedStreak.streakPoints} pts (${theme.name})`;
+  livePreview.innerHTML = `${iconSvg(resolveThemeIcon(theme), { size: 17 })}<span>${Number(cachedStreak.streakDays)} Días · ${Number(cachedStreak.streakPoints)} pts (${escapeHtml(theme.name)})</span>`;
 }
 
 function renderThemesModal() {
@@ -66,13 +80,16 @@ function renderThemesModal() {
       const selectedClass = theme.id === previewThemeId ? 'selected' : '';
       const lockedClass = theme.unlocked ? '' : 'locked';
       const statusText = theme.unlocked
-        ? 'Desbloqueado'
-        : `Requiere ${theme.minDays} días (te faltan ${theme.missingDays})`;
+        ? 'Disponible'
+        : `Requiere ${theme.minDays} días (faltan ${theme.missingDays})`;
       return `
         <button type="button" class="theme-card ${selectedClass} ${lockedClass}" data-theme-id="${escapeHtml(theme.id)}">
-          <div class="theme-swatch" style="background: ${theme.gradient}">${theme.icon} ${escapeHtml(theme.badgeLabel)}</div>
-          <strong>${escapeHtml(theme.name)}</strong>
-          <div class="small-text muted">${escapeHtml(statusText)}</div>
+          <div class="theme-swatch" style="background: ${theme.gradient}">
+            ${iconSvg(resolveThemeIcon(theme), { size: 14 })}
+            <span>${escapeHtml(theme.badgeLabel)}</span>
+          </div>
+          <strong style="font-size:0.86rem;">${escapeHtml(theme.name)}</strong>
+          <div class="small-text muted" style="margin-top:2px;">${escapeHtml(statusText)}</div>
         </button>
       `;
     })

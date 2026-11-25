@@ -4,11 +4,15 @@ import {
   escapeHtml,
   formatShortDate,
   getLocalDateStr,
-  getMondayOfWeek
+  getLocalDateTimeStr,
+  getMondayOfWeek,
+  sanitizeHexColor
 } from './api.js';
+import { iconSvg } from './icons.js';
 import { evaluateTaskAlerts, showToast } from './notifications.js';
 import { refreshStreakWidget } from './streak.js';
 import { focusTaskInTimer } from './timer.js';
+import { closeAllPopovers, enhanceColorPicker, initSubjectCombobox } from './ui.js';
 
 const WEEKDAY_NAMES = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 const PRIORITY_META = {
@@ -25,6 +29,7 @@ let searchTerm = '';
 let sortOrder = 'due_at';
 let historyMonth = '';
 let cachedTasks = [];
+let serverNowLocal = '';
 let pendingDeleteId = null;
 
 const tasksContainer = document.getElementById('tasks-container');
@@ -51,7 +56,6 @@ const colorInput = document.getElementById('task-color-input');
 const dueInput = document.getElementById('task-due-input');
 const priorityInput = document.getElementById('task-priority-input');
 const descInput = document.getElementById('task-desc-input');
-const subjectSuggestions = document.getElementById('subject-suggestions');
 
 // Modal Confirmación Borrado
 const deleteModal = document.getElementById('delete-modal');
@@ -67,33 +71,40 @@ async function loadStudentSubjects() {
   const currentVal = subjectFilterSelect.value || 'ALL';
   subjectFilterSelect.innerHTML =
     '<option value="ALL">Todas las materias</option>' +
-    knownSubjects.map((s) => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)}</option>`).join('');
+    knownSubjects
+      .map(
+        (s) =>
+          `<option value="${escapeHtml(s.name)}" data-dot-color="${sanitizeHexColor(s.color)}">${escapeHtml(s.name)}</option>`
+      )
+      .join('');
   subjectFilterSelect.value = knownSubjects.some((s) => s.name === currentVal) ? currentVal : 'ALL';
-
-  subjectSuggestions.innerHTML = knownSubjects.map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
 }
 
 function renderTaskCard(task) {
   const prio = PRIORITY_META[task.priority] || PRIORITY_META.medium;
+  const safeColor = sanitizeHexColor(task.subject_color);
   const dueTime = task.due_at.slice(11, 16);
   const dueDate = task.due_at.slice(0, 10);
   const hasNotes = Boolean(task.description && task.description.trim());
+  const nowRef = serverNowLocal || getLocalDateTimeStr();
+  const isOverdue = !task.completed && task.due_at < nowRef;
 
   return `
-    <article class="task-card ${task.completed ? 'completed' : ''}" style="border-left-color:${escapeHtml(task.subject_color)}" data-task-id="${task.id}">
+    <article class="task-card ${task.completed ? 'completed' : ''} ${isOverdue ? 'overdue' : ''}" style="border-left-color:${safeColor}" data-task-id="${task.id}">
       <div class="task-top">
         <input type="checkbox" class="task-check" ${task.completed ? 'checked' : ''} data-toggle-task="${task.id}" aria-label="Marcar como completada" />
         <div class="task-title">${escapeHtml(task.title)}</div>
       </div>
       <div class="task-badges">
-        <button type="button" class="subject-tag" style="background:${escapeHtml(task.subject_color)}" data-filter-subject="${escapeHtml(task.subject_name)}">
+        <button type="button" class="subject-tag" style="background:${safeColor}" data-filter-subject="${escapeHtml(task.subject_name)}">
           ${escapeHtml(task.subject_name)}
         </button>
         <span class="prio-tag ${prio.cls}">${prio.label}</span>
+        ${isOverdue ? `<span class="prio-tag prio-overdue">${iconSvg('alert', { size: 11 })}<span>Vencida</span></span>` : ''}
       </div>
       <div class="task-meta">
-        <span>⏰ ${escapeHtml(dueDate)} · ${escapeHtml(dueTime)}</span>
-        ${task.points_awarded > 0 ? `<span>+${task.points_awarded} pts</span>` : ''}
+        <span class="task-meta-time">${iconSvg('clock', { size: 13 })}<span>${escapeHtml(dueDate)} · ${escapeHtml(dueTime)}</span></span>
+        ${task.points_awarded > 0 ? `<span class="task-pts-pill">+${Number(task.points_awarded)} pts</span>` : ''}
       </div>
       ${
         hasNotes
@@ -101,10 +112,10 @@ function renderTaskCard(task) {
           : ''
       }
       <div class="task-actions">
-        ${hasNotes ? `<button type="button" class="mini-action" data-expand-notes="${task.id}">Notas</button>` : ''}
-        ${!task.completed ? `<button type="button" class="mini-action" data-focus-task="${task.id}">Enfocar</button>` : ''}
-        <button type="button" class="mini-action" data-edit-task="${task.id}">Editar</button>
-        <button type="button" class="mini-action del" data-delete-task="${task.id}">Eliminar</button>
+        ${hasNotes ? `<button type="button" class="mini-action" data-expand-notes="${task.id}">${iconSvg('notes', { size: 12 })}<span>Notas</span></button>` : ''}
+        ${!task.completed ? `<button type="button" class="mini-action" data-focus-task="${task.id}">${iconSvg('play', { size: 11 })}<span>Enfocar</span></button>` : ''}
+        <button type="button" class="mini-action" data-edit-task="${task.id}">${iconSvg('edit', { size: 12 })}<span>Editar</span></button>
+        <button type="button" class="mini-action del" data-delete-task="${task.id}">${iconSvg('trash', { size: 12 })}<span>Eliminar</span></button>
       </div>
     </article>
   `;
@@ -114,17 +125,23 @@ function attachCardEvents() {
   tasksContainer.querySelectorAll('[data-toggle-task]').forEach((chk) => {
     chk.addEventListener('change', async () => {
       const id = Number(chk.dataset.toggleTask);
-      const res = await apiFetch(`/api/tasks/${id}/toggle`, { method: 'PATCH' });
-      await refreshStreakWidget();
-      if (res.pointsDelta > 0) {
-        showToast({
-          title: '🏆 ¡Entrega a tiempo!',
-          body: `Sumaste +${res.pointsDelta} puntos de racha (Total: ${res.streakPoints} pts).`,
-          variant: 'success',
-          autoCloseMs: 6000
-        });
+      try {
+        const res = await apiFetch(`/api/tasks/${id}/toggle`, { method: 'PATCH' });
+        await refreshStreakWidget();
+        if (res.pointsDelta > 0) {
+          showToast({
+            title: 'Entrega a tiempo',
+            body: `Sumaste +${res.pointsDelta} puntos de racha (Total: ${res.streakPoints} pts).`,
+            variant: 'success',
+            icon: 'award',
+            autoCloseMs: 6000
+          });
+        }
+        await loadStudentTasks();
+      } catch (err) {
+        showToast({ title: 'Error al actualizar tarea', body: err.message, variant: 'danger', autoCloseMs: 6000 });
+        await loadStudentTasks();
       }
-      await loadStudentTasks();
     });
   });
 
@@ -189,9 +206,9 @@ function renderTasksView() {
   if (viewMode === 'daily') {
     const dayTasks = cachedTasks.filter((t) => t.due_at.startsWith(selectedDay));
     tasksContainer.innerHTML = `
-      <div class="card" style="padding:16px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
-          <h3 style="margin:0;">Vista Diaria — ${escapeHtml(selectedDay)}</h3>
+      <div class="card" style="padding:18px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+          <h3 style="margin:0; font-size:1.05rem;">Vista diaria — ${escapeHtml(selectedDay)}</h3>
           <input type="date" id="daily-date-picker" value="${escapeHtml(selectedDay)}" style="width:auto;" />
         </div>
         ${
@@ -222,7 +239,7 @@ function renderTasksView() {
     return `
       <div class="day-col ${isToday ? 'is-today' : ''}">
         <div class="day-header">
-          <strong>${WEEKDAY_NAMES[i]} ${isToday ? '· Hoy' : ''}</strong>
+          <strong>${WEEKDAY_NAMES[i]}${isToday ? ' · Hoy' : ''}</strong>
           <small>${formatShortDate(dateStr)}</small>
         </div>
         ${
@@ -251,14 +268,14 @@ export async function loadStudentTasks(isLoginSummary = false) {
 
   const data = await apiFetch(`/api/tasks?${params.toString()}`);
   cachedTasks = data.tasks || [];
+  serverNowLocal = data.nowLocal || getLocalDateTimeStr();
   pendingCounterPill.classList.remove('hidden');
   pendingBadge.textContent = String(data.pendingCount ?? 0);
 
   renderTasksView();
 
-  // Evaluar alertas internas sobre todas las tareas pendientes sin filtro
   if (filterSubject === 'ALL' && !searchTerm && viewMode !== 'history') {
-    evaluateTaskAlerts(cachedTasks, isLoginSummary);
+    evaluateTaskAlerts(cachedTasks, isLoginSummary, serverNowLocal);
   }
 }
 
@@ -269,23 +286,27 @@ function openTaskModal(task = null) {
   dueInput.classList.remove('field-invalid');
 
   if (task) {
-    taskModalTitle.textContent = 'Editar Tarea Académica';
+    taskModalTitle.textContent = 'Editar tarea académica';
     editIdInput.value = String(task.id);
     titleInput.value = task.title;
     subjectInput.value = task.subject_name;
-    colorInput.value = task.subject_color || '#4f46e5';
+    colorInput.value = sanitizeHexColor(task.subject_color);
     dueInput.value = task.due_at;
     priorityInput.value = task.priority;
     descInput.value = task.description || '';
+    dueInput.disabled = Boolean(task.completed);
+    priorityInput.disabled = Boolean(task.completed);
   } else {
-    taskModalTitle.textContent = 'Nueva Tarea Académica';
+    taskModalTitle.textContent = 'Nueva tarea académica';
     editIdInput.value = '';
     titleInput.value = '';
     subjectInput.value = knownSubjects[0]?.name || '';
-    colorInput.value = knownSubjects[0]?.color || '#4f46e5';
+    colorInput.value = sanitizeHexColor(knownSubjects[0]?.color);
     dueInput.value = `${getLocalDateStr()}T23:59`;
     priorityInput.value = 'medium';
     descInput.value = '';
+    dueInput.disabled = false;
+    priorityInput.disabled = false;
   }
 
   taskModal.classList.remove('hidden');
@@ -293,11 +314,22 @@ function openTaskModal(task = null) {
 }
 
 export function initStudentHandlers() {
+  enhanceColorPicker(colorInput);
+  initSubjectCombobox(
+    subjectInput,
+    () => knownSubjects,
+    (chosen) => {
+      if (chosen?.color) {
+        colorInput.value = sanitizeHexColor(chosen.color);
+      }
+    }
+  );
+
   document.getElementById('new-task-btn').addEventListener('click', () => openTaskModal());
 
   subjectInput.addEventListener('input', () => {
     const match = knownSubjects.find((s) => s.name.toLowerCase() === subjectInput.value.trim().toLowerCase());
-    if (match) colorInput.value = match.color;
+    if (match) colorInput.value = sanitizeHexColor(match.color);
   });
 
   taskForm.addEventListener('submit', async (e) => {
@@ -333,7 +365,7 @@ export function initStudentHandlers() {
     const payload = {
       title,
       subjectName,
-      subjectColor: colorInput.value,
+      subjectColor: sanitizeHexColor(colorInput.value),
       dueAt,
       priority: priorityInput.value,
       description: descInput.value.trim()
@@ -346,6 +378,7 @@ export function initStudentHandlers() {
       } else {
         await apiFetch('/api/tasks', { method: 'POST', body: payload });
       }
+      closeAllPopovers();
       taskModal.classList.add('hidden');
       await loadStudentTasks();
     } catch (err) {
@@ -356,9 +389,18 @@ export function initStudentHandlers() {
 
   confirmDeleteBtn.addEventListener('click', async () => {
     if (!pendingDeleteId) return;
-    await apiFetch(`/api/tasks/${pendingDeleteId}`, { method: 'DELETE' });
+    const res = await apiFetch(`/api/tasks/${pendingDeleteId}`, { method: 'DELETE' });
     pendingDeleteId = null;
     deleteModal.classList.add('hidden');
+    if (res.revertedPoints > 0) {
+      await refreshStreakWidget();
+      showToast({
+        title: 'Puntos ajustados',
+        body: `Se descontaron -${res.revertedPoints} pts asociados a la entrega de hoy eliminada.`,
+        variant: 'info',
+        autoCloseMs: 6000
+      });
+    }
     await loadStudentTasks();
   });
 
@@ -387,6 +429,7 @@ export function initStudentHandlers() {
 
   document.querySelectorAll('[data-view-mode]').forEach((btn) => {
     btn.addEventListener('click', () => {
+      closeAllPopovers();
       document.querySelectorAll('[data-view-mode]').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       viewMode = btn.dataset.viewMode;

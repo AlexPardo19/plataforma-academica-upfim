@@ -1,4 +1,5 @@
 const TOKEN_KEY = 'upfim_auth_token';
+const HEX_COLOR_RX = /^#[0-9a-fA-F]{6}$/;
 
 export function getClientTimeZone() {
   try {
@@ -9,14 +10,20 @@ export function getClientTimeZone() {
 }
 
 export function getStoredToken() {
-  return localStorage.getItem(TOKEN_KEY) || '';
+  return sessionStorage.getItem(TOKEN_KEY) || '';
 }
 
 export function setStoredToken(token) {
-  if (token) {
-    localStorage.setItem(TOKEN_KEY, token);
-  } else {
+  // Limpiar rastro legado en localStorage para minimizar exposición persistente
+  try {
     localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Ignorado
+  }
+  if (token) {
+    sessionStorage.setItem(TOKEN_KEY, token);
+  } else {
+    sessionStorage.removeItem(TOKEN_KEY);
   }
 }
 
@@ -40,13 +47,14 @@ export async function apiFetch(path, options = {}) {
 
   const resp = await fetch(path, {
     ...options,
+    credentials: 'same-origin',
     headers,
     body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body
   });
 
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
-    if (resp.status === 401 && data.code === 'SESSION_EXPIRED') {
+    if (resp.status === 401 && (data.code === 'SESSION_EXPIRED' || data.code === 'INVALID_SESSION')) {
       setStoredToken('');
       onSessionExpiredCallback(data.error || 'Tu sesión expiró por inactividad.');
     }
@@ -67,6 +75,11 @@ export function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+export function sanitizeHexColor(color, fallback = '#4f46e5') {
+  const clean = String(color ?? '').trim();
+  return HEX_COLOR_RX.test(clean) ? clean.toLowerCase() : fallback;
+}
+
 export function getLocalDateStr(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: getClientTimeZone(),
@@ -76,6 +89,21 @@ export function getLocalDateStr(date = new Date()) {
   }).formatToParts(date);
   const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
   return `${map.year}-${map.month}-${map.day}`;
+}
+
+export function getLocalDateTimeStr(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: getClientTimeZone(),
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  const hour = map.hour === '24' ? '00' : map.hour;
+  return `${map.year}-${map.month}-${map.day}T${hour}:${map.minute}`;
 }
 
 export function addDaysToDateStr(dateStr, delta) {

@@ -2,5 +2,7 @@ node_modules/
 data/*.sqlite
 data/*.sqlite-wal
 data/*.sqlite-shm
+data/.master.key
+data/backups/
 .DS_Store
 .env

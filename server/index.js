@@ -3,22 +3,39 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  appendAuditLog,
   createDatabase,
+  createDatabaseBackup,
   DEFAULT_TIMEZONE,
+  getDatabaseSecurityStatus,
   getLocalDateString,
   getLocalDateTimeString,
-  normalizeTimeZone
+  normalizeTimeZone,
+  withTransaction
 } from './db.js';
 import {
+  buildClearSessionCookie,
+  buildSessionCookie,
+  changeAuthenticatedPassword,
+  checkAccountLockout,
+  clearFailedLoginAttempts,
+  consumeSseTicket,
   createPasswordResetToken,
   createSession,
+  createSseTicket,
   DEFAULT_INACTIVITY_LIMIT_MS,
+  destroyOtherSessions,
   destroySession,
   hashPassword,
+  listActiveSessions,
+  parseCookies,
+  recordFailedLoginAttempt,
   resetPasswordWithToken,
   sanitizeUser,
+  SESSION_COOKIE_NAME,
   validateSession,
-  verifyPassword
+  verifyPassword,
+  verifyTeacherAccessCode
 } from './auth.js';
 import { seedDatabaseIfEmpty } from './seed.js';
 import {
@@ -29,10 +46,24 @@ import {
 } from './streak.js';
 import { ASSISTANT_WELCOME, generateAssistantReply } from './assistant.js';
 import { createSseHub } from './sse.js';
+import {
+  cleanControlChars,
+  createRateLimiter,
+  escapeLikePattern,
+  getClientIp,
+  getSecurityHeaders,
+  isValidEmail,
+  isValidHexColor,
+  isValidLocalDateTime,
+  isValidTime24h,
+  validateAvatarUrl,
+  validatePasswordPolicy
+} from './security.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
+const DOCS_DIR = path.resolve(__dirname, '..', 'documentacion');
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -44,7 +75,6 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon'
 };
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const FORBIDDEN_CHAT_KEYS = [
   'attachment',
   'attachments',
@@ -57,40 +87,74 @@ const FORBIDDEN_CHAT_KEYS = [
   'media'
 ];
 
-function sendJson(res, status, payload) {
+const MAX_DAILY_REWARDED_TASKS = 15;
+
+function sendJson(res, status, payload, extraHeaders = {}) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
+    ...getSecurityHeaders(),
     'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store'
+    'Cache-Control': 'no-store',
+    ...extraHeaders
   });
   res.end(body);
 }
 
-async function parseJsonBody(req) {
+async function parseJsonBody(req, maxBytes = 262_144) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 1_048_576) {
-      throw Object.assign(new Error('El cuerpo de la solicitud excede 1 MB.'), { status: 413 });
+    if (size > maxBytes) {
+      throw Object.assign(new Error('El cuerpo de la solicitud excede el tamaño máximo permitido.'), {
+        status: 413
+      });
     }
     chunks.push(chunk);
   }
   const raw = Buffer.concat(chunks).toString('utf8').trim();
   if (!raw) return {};
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Se esperaba un objeto JSON.');
+    }
+    return parsed;
   } catch {
     throw Object.assign(new Error('JSON inválido en la solicitud.'), { status: 400 });
   }
 }
 
-function getTokenFromRequest(req, urlObj) {
+function getTokenFromRequest(req, urlObj, { allowQueryToken = false } = {}) {
   const authHeader = req.headers.authorization || '';
   if (authHeader.startsWith('Bearer ')) {
-    return authHeader.slice(7).trim();
+    return { token: authHeader.slice(7).trim(), source: 'bearer' };
   }
-  return urlObj.searchParams.get('token') || '';
+  const cookies = parseCookies(req.headers.cookie);
+  if (cookies[SESSION_COOKIE_NAME]) {
+    return { token: cookies[SESSION_COOKIE_NAME], source: 'cookie' };
+  }
+  if (allowQueryToken) {
+    const queryToken = urlObj.searchParams.get('token') || '';
+    if (queryToken) return { token: queryToken, source: 'query' };
+  }
+  return { token: '', source: 'none' };
+}
+
+function verifySameOriginForCookieMutation(req, method, authSource) {
+  if (authSource !== 'cookie') return true;
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
+  const origin = req.headers.origin;
+  const host = req.headers.host;
+  if (origin && host) {
+    try {
+      const originHost = new URL(origin).host;
+      if (originHost !== host) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 function getClientTimeZone(req) {
@@ -116,48 +180,113 @@ function getUnreadMessagesCount(db, userId) {
   return row ? row.count : 0;
 }
 
+function decryptMessageContent(db, storedContent) {
+  if (!storedContent) return '';
+  try {
+    return db.vault ? db.vault.decrypt(storedContent) : storedContent;
+  } catch {
+    return '[Mensaje protegido: error de verificación de integridad]';
+  }
+}
+
+function teacherTeachesGroup(db, teacherId, groupId) {
+  if (!groupId) return false;
+  const row = db
+    .prepare('SELECT 1 AS ok FROM subjects WHERE teacher_id = ? AND group_id = ? LIMIT 1')
+    .get(teacherId, groupId);
+  return Boolean(row);
+}
+
 function serveStaticFile(reqPath, res) {
+  if (reqPath === '/ishikawa' || reqPath === '/ishikawa.svg') {
+    const docFile = reqPath === '/ishikawa.svg' ? 'diagrama-ishikawa.svg' : 'diagrama-ishikawa.html';
+    const docTarget = path.join(DOCS_DIR, docFile);
+    if (fs.existsSync(docTarget)) {
+      const ext = path.extname(docTarget).toLowerCase();
+      res.writeHead(200, {
+        ...getSecurityHeaders(),
+        'Content-Type': MIME_TYPES[ext] || 'text/html; charset=utf-8'
+      });
+      fs.createReadStream(docTarget).pipe(res);
+      return;
+    }
+  }
+
   const cleanRel = reqPath === '/' ? 'index.html' : reqPath.replace(/^\/+/, '');
   const resolved = path.resolve(PUBLIC_DIR, cleanRel);
-  if (!resolved.startsWith(PUBLIC_DIR)) {
-    res.writeHead(403);
+  if (!resolved.startsWith(PUBLIC_DIR + path.sep) && resolved !== path.join(PUBLIC_DIR, 'index.html')) {
+    res.writeHead(403, getSecurityHeaders());
     res.end('Forbidden');
     return;
   }
 
   let target = resolved;
   if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) {
-    // Fallback SPA para rutas no API
+    // Fallback SPA solo cuando no tiene extensión estática desconocida
+    if (path.extname(cleanRel) && path.extname(cleanRel) !== '.html') {
+      res.writeHead(404, getSecurityHeaders());
+      res.end('Not Found');
+      return;
+    }
     target = path.join(PUBLIC_DIR, 'index.html');
   }
 
   if (!fs.existsSync(target)) {
-    res.writeHead(404);
+    res.writeHead(404, getSecurityHeaders());
     res.end('Not Found');
     return;
   }
 
   const ext = path.extname(target).toLowerCase();
   const mime = MIME_TYPES[ext] || 'application/octet-stream';
-  res.writeHead(200, { 'Content-Type': mime });
+  res.writeHead(200, {
+    ...getSecurityHeaders(),
+    'Content-Type': mime
+  });
   fs.createReadStream(target).pipe(res);
 }
 
 /**
- * Crea la instancia del servidor HTTP y base de datos SQLite.
+ * Crea la instancia del servidor HTTP y base de datos SQLite 3 blindada.
  */
 export function createAppServer(options = {}) {
   const dbPath = options.dbPath || path.resolve(__dirname, '..', 'data', 'academico.sqlite');
   const inactivityLimitMs =
     options.inactivityMs ??
     (Number(process.env.SESSION_INACTIVITY_MS) || DEFAULT_INACTIVITY_LIMIT_MS);
+  const enableDemoInbox =
+    options.enableDemoInbox ??
+    (process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEMO_INBOX !== 'false');
 
-  const db = createDatabase(dbPath);
+  const db = createDatabase(dbPath, { encryptionKey: options.encryptionKey });
   seedDatabaseIfEmpty(db, DEFAULT_TIMEZONE);
   const sseHub = createSseHub();
+  const rateLimiter = createRateLimiter();
 
-  function requireAuth(req, res, urlObj) {
-    const token = getTokenFromRequest(req, urlObj);
+  function checkRate(res, bucketKey, maxRequests, windowMs) {
+    const status = rateLimiter.check(bucketKey, maxRequests, windowMs);
+    if (!status.allowed) {
+      sendJson(
+        res,
+        429,
+        {
+          code: 'RATE_LIMITED',
+          error: `Demasiadas solicitudes seguidas. Intenta nuevamente en ${status.retryAfterSec} segundos.`
+        },
+        { 'Retry-After': String(status.retryAfterSec) }
+      );
+      return false;
+    }
+    return true;
+  }
+
+  function requireAuth(req, res, urlObj, { allowQueryToken = false } = {}) {
+    const { token, source } = getTokenFromRequest(req, urlObj, { allowQueryToken });
+    const method = (req.method || 'GET').toUpperCase();
+    if (!verifySameOriginForCookieMutation(req, method, source)) {
+      sendJson(res, 403, { code: 'CSRF_BLOCKED', error: 'Origen de solicitud inválido (protección CSRF).' });
+      return null;
+    }
     const result = validateSession(db, token, inactivityLimitMs);
     if (!result.ok) {
       sendJson(res, result.status, { code: result.code, error: result.error });
@@ -182,6 +311,8 @@ export function createAppServer(options = {}) {
     const urlObj = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const pathname = urlObj.pathname;
     const method = (req.method || 'GET').toUpperCase();
+    const clientIp = getClientIp(req);
+    const userAgent = String(req.headers['user-agent'] || '');
 
     if (!pathname.startsWith('/api/')) {
       serveStaticFile(pathname, res);
@@ -195,7 +326,8 @@ export function createAppServer(options = {}) {
       // Salud y catálogos públicos
       // ------------------------------------------------------------------
       if (method === 'GET' && pathname === '/api/health') {
-        return sendJson(res, 200, { ok: true, timeZone: tz });
+        const sqliteVer = db.prepare('SELECT sqlite_version() AS v').get()?.v || '3.x';
+        return sendJson(res, 200, { ok: true, timeZone: tz, database: `SQLite ${sqliteVer}` });
       }
 
       if (method === 'GET' && pathname === '/api/groups') {
@@ -207,20 +339,39 @@ export function createAppServer(options = {}) {
       // Autenticación, Registro, Recuperación y Perfil (HU-01..HU-10)
       // ------------------------------------------------------------------
       if (method === 'POST' && pathname === '/api/auth/register') {
+        if (!checkRate(res, `reg:${clientIp}`, 10, 5 * 60_000)) return;
+
         const body = await parseJsonBody(req);
-        const name = String(body.name || '').trim();
-        const email = String(body.email || '').trim().toLowerCase();
+        const name = cleanControlChars(body.name);
+        const email = cleanControlChars(body.email).toLowerCase();
         const password = String(body.password || '');
         const role = body.role === 'teacher' ? 'teacher' : 'student';
 
-        if (name.length < 2) {
-          return sendJson(res, 400, { error: 'Ingresa tu nombre completo.' });
+        if (name.length < 2 || name.length > 120) {
+          return sendJson(res, 400, { error: 'Ingresa tu nombre completo (entre 2 y 120 caracteres).' });
         }
-        if (!EMAIL_REGEX.test(email)) {
+        if (!isValidEmail(email)) {
           return sendJson(res, 400, { error: 'El correo electrónico no tiene un formato válido.' });
         }
-        if (password.length < 6) {
-          return sendJson(res, 400, { error: 'La contraseña debe tener al menos 6 caracteres.' });
+        const passPolicy = validatePasswordPolicy(password);
+        if (!passPolicy.ok) {
+          return sendJson(res, 400, { error: passPolicy.error });
+        }
+
+        // Blindaje contra escalación de privilegios al rol Docente
+        if (role === 'teacher') {
+          if (!verifyTeacherAccessCode(body.teacherCode, options.teacherAccessCode)) {
+            appendAuditLog(db, {
+              userId: null,
+              action: 'PRIVILEGE_ESCALATION_BLOCKED',
+              severity: 'warning',
+              ipAddress: clientIp,
+              details: { attemptedEmail: email, role: 'teacher' }
+            });
+            return sendJson(res, 403, {
+              error: 'Se requiere un código institucional de docente válido para registrar cuentas de supervisión.'
+            });
+          }
         }
 
         const exists = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(email);
@@ -240,54 +391,142 @@ export function createAppServer(options = {}) {
           }
         }
 
-        const nowIso = new Date().toISOString();
-        const result = db
-          .prepare(
-            `INSERT INTO users (name, email, password_hash, role, group_id, tutorial_completed, created_at)
-             VALUES (?, ?, ?, ?, ?, 0, ?)`
-          )
-          .run(name, email, hashPassword(password), role, groupId, nowIso);
+        const regOutcome = withTransaction(db, () => {
+          const nowIso = new Date().toISOString();
+          const result = db
+            .prepare(
+              `INSERT INTO users (name, email, password_hash, role, group_id, tutorial_completed, created_at)
+               VALUES (?, ?, ?, ?, ?, 0, ?)`
+            )
+            .run(name, email, hashPassword(password), role, groupId, nowIso);
 
-        const userId = Number(result.lastInsertRowid);
-        let streakEvent = null;
-        if (role === 'student') {
-          streakEvent = evaluateDailyStreak(db, userId, tz);
-          db.prepare(
-            `INSERT INTO assistant_messages (user_id, sender, content, created_at)
-             VALUES (?, 'assistant', ?, ?)`
-          ).run(userId, ASSISTANT_WELCOME, nowIso);
-        }
+          const userId = Number(result.lastInsertRowid);
+          let streakEvent = null;
+          if (role === 'student') {
+            streakEvent = evaluateDailyStreak(db, userId, tz);
+            db.prepare(
+              `INSERT INTO assistant_messages (user_id, sender, content, created_at)
+               VALUES (?, 'assistant', ?, ?)`
+            ).run(userId, ASSISTANT_WELCOME, nowIso);
+          }
 
-        const token = createSession(db, userId);
-        const user = getUserWithGroupById(db, userId);
-        return sendJson(res, 201, { token, user, streakEvent, unreadMessages: 0 });
+          const token = createSession(db, userId, { ipAddress: clientIp, userAgent });
+          appendAuditLog(db, {
+            userId,
+            action: 'AUTH_REGISTER_SUCCESS',
+            severity: 'info',
+            ipAddress: clientIp,
+            details: { role, groupId }
+          });
+
+          return { userId, token, streakEvent };
+        });
+
+        const user = getUserWithGroupById(db, regOutcome.userId);
+        return sendJson(
+          res,
+          201,
+          {
+            token: regOutcome.token,
+            user,
+            streakEvent: regOutcome.streakEvent,
+            unreadMessages: 0
+          },
+          { 'Set-Cookie': buildSessionCookie(regOutcome.token) }
+        );
       }
 
       if (method === 'POST' && pathname === '/api/auth/login') {
+        if (!checkRate(res, `login:${clientIp}`, options.loginRateLimitMax ?? 15, 60_000)) return;
+
         const body = await parseJsonBody(req);
-        const email = String(body.email || '').trim().toLowerCase();
+        const email = cleanControlChars(body.email).toLowerCase();
         const password = String(body.password || '');
 
         const userRow = db.prepare('SELECT * FROM users WHERE lower(email) = ?').get(email);
+        if (userRow) {
+          const lockState = checkAccountLockout(userRow);
+          if (lockState.locked) {
+            appendAuditLog(db, {
+              userId: userRow.id,
+              action: 'AUTH_LOGIN_LOCKED_ATTEMPT',
+              severity: 'warning',
+              ipAddress: clientIp,
+              details: { retryAfterSec: lockState.retryAfterSec }
+            });
+            return sendJson(
+              res,
+              423,
+              {
+                code: 'ACCOUNT_LOCKED',
+                error: `Cuenta bloqueada temporalmente por múltiples intentos fallidos. Intenta en ${Math.ceil(lockState.retryAfterSec / 60)} min.`
+              },
+              { 'Retry-After': String(lockState.retryAfterSec) }
+            );
+          }
+        }
+
         if (!userRow || !verifyPassword(password, userRow.password_hash)) {
+          if (userRow) {
+            const failInfo = recordFailedLoginAttempt(db, userRow);
+            appendAuditLog(db, {
+              userId: userRow.id,
+              action: failInfo.locked ? 'AUTH_ACCOUNT_LOCKED' : 'AUTH_LOGIN_FAILED',
+              severity: failInfo.locked ? 'critical' : 'warning',
+              ipAddress: clientIp,
+              details: { attempts: failInfo.attempts }
+            });
+            if (failInfo.locked) {
+              return sendJson(res, 423, {
+                code: 'ACCOUNT_LOCKED',
+                error: 'Se superó el límite de 5 intentos fallidos. Tu cuenta se bloqueó temporalmente por 15 minutos.'
+              });
+            }
+          } else {
+            // Mitigación de ataques de temporización cuando el correo no existe
+            verifyPassword(password, '00000000000000000000000000000000:' + '0'.repeat(128));
+          }
           return sendJson(res, 401, { error: 'Correo electrónico o contraseña incorrectos.' });
         }
 
-        let streakEvent = null;
-        if (userRow.role === 'student') {
-          streakEvent = evaluateDailyStreak(db, userRow.id, tz);
-        }
+        const loginOutcome = withTransaction(db, () => {
+          clearFailedLoginAttempts(db, userRow.id);
+          let streakEvent = null;
+          if (userRow.role === 'student') {
+            streakEvent = evaluateDailyStreak(db, userRow.id, tz);
+          }
+          const token = createSession(db, userRow.id, { ipAddress: clientIp, userAgent });
+          appendAuditLog(db, {
+            userId: userRow.id,
+            action: 'AUTH_LOGIN_SUCCESS',
+            severity: 'info',
+            ipAddress: clientIp,
+            details: { role: userRow.role }
+          });
+          return { token, streakEvent };
+        });
 
-        const token = createSession(db, userRow.id);
         const user = getUserWithGroupById(db, userRow.id);
         const unreadMessages = getUnreadMessagesCount(db, userRow.id);
-        return sendJson(res, 200, { token, user, streakEvent, unreadMessages });
+        return sendJson(
+          res,
+          200,
+          {
+            token: loginOutcome.token,
+            user,
+            streakEvent: loginOutcome.streakEvent,
+            unreadMessages
+          },
+          { 'Set-Cookie': buildSessionCookie(loginOutcome.token) }
+        );
       }
 
       if (method === 'POST' && pathname === '/api/auth/forgot-password') {
+        if (!checkRate(res, `forgot:${clientIp}`, 6, 5 * 60_000)) return;
+
         const body = await parseJsonBody(req);
-        const email = String(body.email || '').trim().toLowerCase();
-        if (!EMAIL_REGEX.test(email)) {
+        const email = cleanControlChars(body.email).toLowerCase();
+        if (!isValidEmail(email)) {
           return sendJson(res, 400, { error: 'Ingresa un correo electrónico válido.' });
         }
         const resetData = createPasswordResetToken(db, email);
@@ -297,47 +536,99 @@ export function createAppServer(options = {}) {
             message: 'Si el correo existe en la plataforma, se ha generado un enlace de recuperación válido por 15 minutos.'
           });
         }
-        return sendJson(res, 200, {
+
+        appendAuditLog(db, {
+          userId: resetData.user.id,
+          action: 'AUTH_PASSWORD_RESET_REQUESTED',
+          severity: 'warning',
+          ipAddress: clientIp,
+          details: { tokenHashedInDb: true, demoInboxExposed: enableDemoInbox }
+        });
+
+        const responsePayload = {
           ok: true,
-          message: 'Se generó tu enlace seguro de recuperación (válido por 15 minutos).',
-          demoInbox: {
+          message: 'Si el correo existe en la plataforma, se ha generado un enlace seguro de recuperación (válido por 15 minutos).'
+        };
+
+        if (enableDemoInbox) {
+          responsePayload.demoInbox = {
             email: resetData.user.email,
             resetToken: resetData.token,
             expiresAt: resetData.expiresAt,
-            note: 'Modo local autónomo: en cumplimiento de limitaciones del sitio, el enlace se muestra en esta bandeja segura sin envío SMTP externo.'
-          }
-        });
+            note: 'Modo local autónomo: usa este código temporal de verificación (válido por 15 minutos) para restablecer tu contraseña.'
+          };
+        }
+
+        return sendJson(res, 200, responsePayload);
       }
 
       if (method === 'POST' && pathname === '/api/auth/reset-password') {
+        if (!checkRate(res, `reset:${clientIp}`, 6, 5 * 60_000)) return;
+
         const body = await parseJsonBody(req);
         const result = resetPasswordWithToken(
           db,
-          String(body.token || '').trim(),
+          cleanControlChars(body.token),
           String(body.newPassword || '')
         );
         if (!result.ok) {
           return sendJson(res, 400, { error: result.error });
         }
-        return sendJson(res, 200, { ok: true, message: 'Contraseña actualizada correctamente. Ya puedes iniciar sesión.' });
+        appendAuditLog(db, {
+          userId: result.userId,
+          action: 'AUTH_PASSWORD_RESET_COMPLETED',
+          severity: 'warning',
+          ipAddress: clientIp,
+          details: { allSessionsRevoked: true }
+        });
+        return sendJson(
+          res,
+          200,
+          { ok: true, message: 'Contraseña actualizada correctamente. Ya puedes iniciar sesión.' },
+          { 'Set-Cookie': buildClearSessionCookie() }
+        );
       }
 
       // ------------------------------------------------------------------
-      // Rutas autenticadas a partir de este punto
+      // Canal SSE en Tiempo Real (soporta ticket efímero de 1 uso o Cookie HttpOnly)
       // ------------------------------------------------------------------
       if (method === 'GET' && pathname === '/api/events') {
-        const auth = requireAuth(req, res, urlObj);
+        const ticketParam = urlObj.searchParams.get('ticket') || '';
+        if (ticketParam) {
+          const ticketUser = consumeSseTicket(db, ticketParam);
+          if (!ticketUser) {
+            return sendJson(res, 401, { code: 'INVALID_SSE_TICKET', error: 'Ticket de eventos inválido o expirado.' });
+          }
+          sseHub.registerClient(ticketUser.id, res);
+          return;
+        }
+        const auth = requireAuth(req, res, urlObj, { allowQueryToken: true });
         if (!auth) return;
         sseHub.registerClient(auth.user.id, res);
         return;
       }
 
+      // ------------------------------------------------------------------
+      // Rutas autenticadas a partir de este punto
+      // ------------------------------------------------------------------
       const auth = requireAuth(req, res, urlObj);
       if (!auth) return;
 
+      if (method === 'POST' && pathname === '/api/events/ticket') {
+        const ticketData = createSseTicket(db, auth.user.id);
+        return sendJson(res, 201, ticketData);
+      }
+
       if (method === 'POST' && pathname === '/api/auth/logout') {
         destroySession(db, auth.token);
-        return sendJson(res, 200, { ok: true });
+        appendAuditLog(db, {
+          userId: auth.user.id,
+          action: 'AUTH_LOGOUT',
+          severity: 'info',
+          ipAddress: clientIp,
+          details: {}
+        });
+        return sendJson(res, 200, { ok: true }, { 'Set-Cookie': buildClearSessionCookie() });
       }
 
       if (method === 'GET' && pathname === '/api/auth/me') {
@@ -345,25 +636,63 @@ export function createAppServer(options = {}) {
         return sendJson(res, 200, { user: auth.user, unreadMessages });
       }
 
+      if (method === 'GET' && pathname === '/api/auth/sessions') {
+        const sessions = listActiveSessions(db, auth.user.id, auth.tokenHash);
+        return sendJson(res, 200, { sessions });
+      }
+
+      if (method === 'DELETE' && pathname === '/api/auth/sessions/others') {
+        const closedCount = destroyOtherSessions(db, auth.user.id, auth.tokenHash);
+        appendAuditLog(db, {
+          userId: auth.user.id,
+          action: 'AUTH_REVOKE_OTHER_SESSIONS',
+          severity: 'warning',
+          ipAddress: clientIp,
+          details: { closedCount }
+        });
+        return sendJson(res, 200, { ok: true, closedCount });
+      }
+
+      if (method === 'POST' && pathname === '/api/auth/change-password') {
+        const body = await parseJsonBody(req);
+        const result = changeAuthenticatedPassword(
+          db,
+          auth.user.id,
+          String(body.currentPassword || ''),
+          String(body.newPassword || ''),
+          auth.tokenHash
+        );
+        if (!result.ok) {
+          return sendJson(res, result.status || 400, { error: result.error });
+        }
+        appendAuditLog(db, {
+          userId: auth.user.id,
+          action: 'AUTH_PASSWORD_CHANGED',
+          severity: 'warning',
+          ipAddress: clientIp,
+          details: { revokedOtherSessions: result.revokedSessions }
+        });
+        return sendJson(res, 200, {
+          ok: true,
+          revokedSessions: result.revokedSessions,
+          message: 'Contraseña actualizada y otras sesiones cerradas correctamente.'
+        });
+      }
+
       if (method === 'PUT' && pathname === '/api/profile') {
         const body = await parseJsonBody(req);
-        const name = String(body.name ?? auth.user.name).trim();
-        const email = String(body.email ?? auth.user.email).trim().toLowerCase();
-        const avatarUrl = String(body.avatarUrl ?? auth.user.avatarUrl ?? '').trim();
+        const name = cleanControlChars(body.name ?? auth.user.name);
+        const email = cleanControlChars(body.email ?? auth.user.email).toLowerCase();
+        const avatarCheck = validateAvatarUrl(body.avatarUrl ?? auth.user.avatarUrl ?? '');
 
-        if (name.length < 2) {
-          return sendJson(res, 400, { error: 'El nombre debe tener al menos 2 caracteres.' });
+        if (name.length < 2 || name.length > 120) {
+          return sendJson(res, 400, { error: 'El nombre debe tener entre 2 y 120 caracteres.' });
         }
-        if (!EMAIL_REGEX.test(email)) {
+        if (!isValidEmail(email)) {
           return sendJson(res, 400, { error: 'Corrige el formato del correo electrónico.' });
         }
-        if (
-          avatarUrl &&
-          !avatarUrl.startsWith('https://') &&
-          !avatarUrl.startsWith('http://') &&
-          !avatarUrl.startsWith('data:image/')
-        ) {
-          return sendJson(res, 400, { error: 'La URL de fotografía debe usar http(s) o imagen válida.' });
+        if (!avatarCheck.ok) {
+          return sendJson(res, 400, { error: avatarCheck.error });
         }
 
         const duplicate = db
@@ -380,14 +709,52 @@ export function createAppServer(options = {}) {
           groupId = grp.id;
         }
 
-        db.prepare('UPDATE users SET name = ?, email = ?, avatar_url = ?, group_id = ? WHERE id = ?').run(
-          name,
-          email,
-          avatarUrl,
-          groupId,
-          auth.user.id
-        );
+        withTransaction(db, () => {
+          db.prepare('UPDATE users SET name = ?, email = ?, avatar_url = ?, group_id = ? WHERE id = ?').run(
+            name,
+            email,
+            avatarCheck.value,
+            groupId,
+            auth.user.id
+          );
+          appendAuditLog(db, {
+            userId: auth.user.id,
+            action: 'PROFILE_UPDATED',
+            severity: 'info',
+            ipAddress: clientIp,
+            details: { groupId }
+          });
+        });
+
         return sendJson(res, 200, { user: getUserWithGroupById(db, auth.user.id) });
+      }
+
+      if (method === 'GET' && pathname === '/api/profile/export') {
+        const tasks = db
+          .prepare(
+            'SELECT id, subject_name, subject_color, title, description, due_at, priority, completed, completed_at, points_awarded, created_at FROM tasks WHERE user_id = ? ORDER BY due_at ASC'
+          )
+          .all(auth.user.id);
+        const audit = db
+          .prepare(
+            'SELECT id, action, severity, created_at, entry_hash FROM audit_logs WHERE user_id = ? ORDER BY id DESC LIMIT 30'
+          )
+          .all(auth.user.id);
+
+        appendAuditLog(db, {
+          userId: auth.user.id,
+          action: 'USER_DATA_EXPORTED',
+          severity: 'info',
+          ipAddress: clientIp,
+          details: { taskCount: tasks.length }
+        });
+
+        return sendJson(res, 200, {
+          exportedAt: new Date().toISOString(),
+          user: auth.user,
+          tasks,
+          recentSecurityEvents: audit
+        });
       }
 
       if (method === 'POST' && pathname === '/api/profile/tutorial') {
@@ -395,6 +762,72 @@ export function createAppServer(options = {}) {
         const completed = body.completed === false ? 0 : 1;
         db.prepare('UPDATE users SET tutorial_completed = ? WHERE id = ?').run(completed, auth.user.id);
         return sendJson(res, 200, { ok: true, tutorialCompleted: Boolean(completed) });
+      }
+
+      // ------------------------------------------------------------------
+      // Centro de Blindaje e Integridad SQLite 3
+      // ------------------------------------------------------------------
+      if (method === 'GET' && pathname === '/api/security/status') {
+        const status = getDatabaseSecurityStatus(db, dbPath);
+        if (auth.user.role !== 'teacher') {
+          return sendJson(res, 200, {
+            engine: status.engine,
+            integrityOk: status.integrityOk,
+            pragmas: status.pragmas,
+            encryption: {
+              algorithm: status.encryption.algorithm,
+              allEncryptedAtRest: status.encryption.allEncryptedAtRest
+            },
+            auditChain: {
+              ok: status.auditChain.ok,
+              totalEntries: status.auditChain.totalEntries
+            }
+          });
+        }
+        return sendJson(res, 200, status);
+      }
+
+      if (method === 'GET' && pathname === '/api/security/audit') {
+        if (auth.user.role === 'teacher') {
+          const logs = db
+            .prepare(
+              `SELECT a.id, a.user_id AS userId, u.name AS userName, u.role AS userRole,
+                      a.action, a.severity, a.ip_address AS ipAddress, a.details_json AS detailsJson,
+                      a.created_at AS createdAt, substr(a.entry_hash, 1, 16) AS shortHash
+               FROM audit_logs a
+               LEFT JOIN users u ON u.id = a.user_id
+               ORDER BY a.id DESC
+               LIMIT 25`
+            )
+            .all();
+          return sendJson(res, 200, { logs });
+        }
+
+        const ownLogs = db
+          .prepare(
+            `SELECT id, action, severity, created_at AS createdAt, substr(entry_hash, 1, 16) AS shortHash
+             FROM audit_logs
+             WHERE user_id = ?
+             ORDER BY id DESC
+             LIMIT 15`
+          )
+          .all(auth.user.id);
+        return sendJson(res, 200, { logs: ownLogs });
+      }
+
+      if (method === 'POST' && pathname === '/api/security/backup') {
+        if (!requireRole(auth, res, 'teacher')) return;
+        if (!checkRate(res, `backup:${auth.user.id}`, 5, 60_000)) return;
+
+        const backup = createDatabaseBackup(db, dbPath);
+        appendAuditLog(db, {
+          userId: auth.user.id,
+          action: 'DATABASE_ATOMIC_BACKUP_CREATED',
+          severity: 'info',
+          ipAddress: clientIp,
+          details: { fileName: backup.fileName, sizeBytes: backup.sizeBytes }
+        });
+        return sendJson(res, 201, { ok: true, backup });
       }
 
       // ------------------------------------------------------------------
@@ -425,8 +858,8 @@ export function createAppServer(options = {}) {
 
       if (method === 'GET' && pathname === '/api/tasks') {
         if (!requireRole(auth, res, 'student')) return;
-        const subject = (urlObj.searchParams.get('subject') || '').trim();
-        const search = (urlObj.searchParams.get('search') || '').trim().toLowerCase();
+        const subject = cleanControlChars(urlObj.searchParams.get('subject') || '');
+        const search = cleanControlChars(urlObj.searchParams.get('search') || '').toLowerCase().slice(0, 120);
         const sort = (urlObj.searchParams.get('sort') || 'due_at').trim();
         const status = (urlObj.searchParams.get('status') || 'all').trim();
         const month = (urlObj.searchParams.get('month') || '').trim();
@@ -439,8 +872,10 @@ export function createAppServer(options = {}) {
           params.push(subject);
         }
         if (search) {
-          conditions.push('(lower(title) LIKE ? OR lower(description) LIKE ? OR lower(subject_name) LIKE ?)');
-          const pattern = `%${search}%`;
+          conditions.push(
+            "(lower(title) LIKE ? ESCAPE '\\' OR lower(description) LIKE ? ESCAPE '\\' OR lower(subject_name) LIKE ? ESCAPE '\\')"
+          );
+          const pattern = `%${escapeLikePattern(search)}%`;
           params.push(pattern, pattern, pattern);
         }
         if (status === 'pending') {
@@ -448,8 +883,8 @@ export function createAppServer(options = {}) {
         } else if (status === 'completed') {
           conditions.push('completed = 1');
         }
-        if (month && /^\d{4}-\d{2}$/.test(month)) {
-          conditions.push("substr(COALESCE(completed_at, due_at), 1, 7) = ?");
+        if (month && /^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+          conditions.push('substr(COALESCE(completed_at, due_at), 1, 7) = ?');
           params.push(month);
         }
 
@@ -476,19 +911,31 @@ export function createAppServer(options = {}) {
 
       if (method === 'POST' && pathname === '/api/tasks') {
         if (!requireRole(auth, res, 'student')) return;
+        if (!checkRate(res, `tasks:${auth.user.id}`, 40, 60_000)) return;
+
         const body = await parseJsonBody(req);
-        const title = String(body.title || '').trim();
-        const subjectName = String(body.subjectName || '').trim();
-        const subjectColor = String(body.subjectColor || '#4f46e5').trim();
-        const description = String(body.description || '').trim();
-        const dueAt = String(body.dueAt || '').trim();
+        const title = cleanControlChars(body.title);
+        const subjectName = cleanControlChars(body.subjectName);
+        const subjectColor = cleanControlChars(body.subjectColor || '#4f46e5');
+        const description = cleanControlChars(body.description, { multiline: true });
+        const dueAt = cleanControlChars(body.dueAt);
         const priority = ['high', 'medium', 'low'].includes(body.priority) ? body.priority : 'medium';
 
         if (!title || !subjectName || !dueAt) {
           return sendJson(res, 400, { error: 'Título, asignatura y fecha límite son campos obligatorios.' });
         }
-        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dueAt)) {
-          return sendJson(res, 400, { error: 'Formato de fecha y hora límite inválido (usa YYYY-MM-DDTHH:MM).' });
+        if (title.length > 200 || subjectName.length > 120 || description.length > 4000) {
+          return sendJson(res, 400, {
+            error: 'Se excedió la longitud máxima permitida (título 200, materia 120, notas 4000 caracteres).'
+          });
+        }
+        if (!isValidHexColor(subjectColor)) {
+          return sendJson(res, 400, { error: 'El color de asignatura debe tener formato hexadecimal #RRGGBB.' });
+        }
+        if (!isValidLocalDateTime(dueAt)) {
+          return sendJson(res, 400, {
+            error: 'Fecha y hora límite inválida en el calendario (usa formato real YYYY-MM-DDTHH:MM).'
+          });
         }
 
         const nowLocal = getLocalDateTimeString(tz);
@@ -506,7 +953,7 @@ export function createAppServer(options = {}) {
               due_at, priority, completed, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
           )
-          .run(auth.user.id, subjectName, subjectColor, title, description, dueAt, priority, nowIso, nowIso);
+          .run(auth.user.id, subjectName, subjectColor.toLowerCase(), title, description, dueAt, priority, nowIso, nowIso);
 
         const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(Number(info.lastInsertRowid));
         return sendJson(res, 201, { task });
@@ -524,18 +971,32 @@ export function createAppServer(options = {}) {
 
         if (method === 'PUT' && !subAction) {
           const body = await parseJsonBody(req);
-          const title = String(body.title ?? task.title).trim();
-          const subjectName = String(body.subjectName ?? task.subject_name).trim();
-          const subjectColor = String(body.subjectColor ?? task.subject_color).trim();
-          const description = String(body.description ?? task.description).trim();
-          const dueAt = String(body.dueAt ?? task.due_at).trim();
+          const title = cleanControlChars(body.title ?? task.title);
+          const subjectName = cleanControlChars(body.subjectName ?? task.subject_name);
+          const subjectColor = cleanControlChars(body.subjectColor ?? task.subject_color);
+          const description = cleanControlChars(body.description ?? task.description, { multiline: true });
+          const dueAt = cleanControlChars(body.dueAt ?? task.due_at);
           const priority = ['high', 'medium', 'low'].includes(body.priority) ? body.priority : task.priority;
 
           if (!title || !subjectName || !dueAt) {
             return sendJson(res, 400, { error: 'Título, asignatura y fecha límite son obligatorios.' });
           }
-          if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dueAt)) {
-            return sendJson(res, 400, { error: 'Formato de fecha y hora límite inválido.' });
+          if (title.length > 200 || subjectName.length > 120 || description.length > 4000) {
+            return sendJson(res, 400, {
+              error: 'Se excedió la longitud máxima permitida en los campos de la tarea.'
+            });
+          }
+          if (!isValidHexColor(subjectColor)) {
+            return sendJson(res, 400, { error: 'El color de asignatura debe tener formato hexadecimal #RRGGBB.' });
+          }
+          if (!isValidLocalDateTime(dueAt)) {
+            return sendJson(res, 400, { error: 'Fecha y hora límite inválida en el calendario.' });
+          }
+
+          if (task.completed && (priority !== task.priority || dueAt !== task.due_at)) {
+            return sendJson(res, 400, {
+              error: 'No se puede alterar la prioridad ni la fecha límite de una tarea ya completada. Desmárcala primero.'
+            });
           }
 
           const nowLocal = getLocalDateTimeString(tz);
@@ -549,7 +1010,17 @@ export function createAppServer(options = {}) {
              SET title = ?, subject_name = ?, subject_color = ?, description = ?,
                  due_at = ?, priority = ?, updated_at = ?
              WHERE id = ? AND user_id = ?`
-          ).run(title, subjectName, subjectColor, description, dueAt, priority, nowIso, taskId, auth.user.id);
+          ).run(
+            title,
+            subjectName,
+            subjectColor.toLowerCase(),
+            description,
+            dueAt,
+            priority,
+            nowIso,
+            taskId,
+            auth.user.id
+          );
 
           const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
           return sendJson(res, 200, { task: updated });
@@ -557,49 +1028,89 @@ export function createAppServer(options = {}) {
 
         if (method === 'PATCH' && subAction === 'toggle') {
           const nowLocal = getLocalDateTimeString(tz);
+          const todayLocal = nowLocal.slice(0, 10);
           const nowIso = new Date().toISOString();
-          let pointsDelta = 0;
 
-          if (!task.completed) {
-            const pts = calculateTaskCompletionPoints(task, nowLocal);
-            pointsDelta = pts;
-            db.prepare(
-              `UPDATE tasks
-               SET completed = 1, completed_at = ?, points_awarded = ?, updated_at = ?
-               WHERE id = ?`
-            ).run(nowLocal, pts, nowIso, taskId);
-            if (pts > 0) {
-              db.prepare('UPDATE users SET streak_points = streak_points + ? WHERE id = ?').run(pts, auth.user.id);
-            }
-          } else {
-            const prevPts = task.points_awarded || 0;
-            pointsDelta = -prevPts;
-            db.prepare(
-              `UPDATE tasks
-               SET completed = 0, completed_at = NULL, points_awarded = 0, updated_at = ?
-               WHERE id = ?`
-            ).run(nowIso, taskId);
-            if (prevPts > 0) {
-              db.prepare('UPDATE users SET streak_points = MAX(0, streak_points - ?) WHERE id = ?').run(
-                prevPts,
-                auth.user.id
-              );
-            }
-          }
+          const toggleResult = withTransaction(db, () => {
+            const freshTask = db
+              .prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?')
+              .get(taskId, auth.user.id);
+            let pointsDelta = 0;
 
-          const updatedTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
-          const updatedUser = getUserWithGroupById(db, auth.user.id);
+            if (!freshTask.completed) {
+              const rewardedToday = db
+                .prepare(
+                  'SELECT COUNT(*) AS count FROM tasks WHERE user_id = ? AND completed = 1 AND points_awarded > 0 AND substr(completed_at, 1, 10) = ?'
+                )
+                .get(auth.user.id, todayLocal).count;
+
+              const rawPts = calculateTaskCompletionPoints(freshTask, nowLocal);
+              const pts = rewardedToday >= MAX_DAILY_REWARDED_TASKS ? 0 : rawPts;
+              pointsDelta = pts;
+
+              db.prepare(
+                `UPDATE tasks
+                 SET completed = 1, completed_at = ?, points_awarded = ?, updated_at = ?
+                 WHERE id = ?`
+              ).run(nowLocal, pts, nowIso, taskId);
+
+              if (pts > 0) {
+                db.prepare('UPDATE users SET streak_points = streak_points + ? WHERE id = ?').run(pts, auth.user.id);
+              }
+            } else {
+              const prevPts = freshTask.points_awarded || 0;
+              pointsDelta = -prevPts;
+              db.prepare(
+                `UPDATE tasks
+                 SET completed = 0, completed_at = NULL, points_awarded = 0, updated_at = ?
+                 WHERE id = ?`
+              ).run(nowIso, taskId);
+              if (prevPts > 0) {
+                db.prepare('UPDATE users SET streak_points = MAX(0, streak_points - ?) WHERE id = ?').run(
+                  prevPts,
+                  auth.user.id
+                );
+              }
+            }
+
+            const updatedTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+            const updatedUser = getUserWithGroupById(db, auth.user.id);
+            return { updatedTask, updatedUser, pointsDelta };
+          });
+
           return sendJson(res, 200, {
-            task: updatedTask,
-            pointsDelta,
-            streakPoints: updatedUser.streakPoints,
-            streakDays: updatedUser.streakDays
+            task: toggleResult.updatedTask,
+            pointsDelta: toggleResult.pointsDelta,
+            streakPoints: toggleResult.updatedUser.streakPoints,
+            streakDays: toggleResult.updatedUser.streakDays
           });
         }
 
         if (method === 'DELETE' && !subAction) {
-          db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(taskId, auth.user.id);
-          return sendJson(res, 200, { ok: true, deletedId: taskId });
+          const todayLocal = getLocalDateString(tz);
+          const revertedPoints = withTransaction(db, () => {
+            const freshTask = db
+              .prepare('SELECT id, completed, completed_at, points_awarded FROM tasks WHERE id = ? AND user_id = ?')
+              .get(taskId, auth.user.id);
+            let reverted = 0;
+            // Anti-exploit: si completa hoy para ganar puntos y borra la tarea el mismo día, se revierten los puntos
+            if (
+              freshTask &&
+              freshTask.completed &&
+              freshTask.points_awarded > 0 &&
+              String(freshTask.completed_at || '').startsWith(todayLocal)
+            ) {
+              reverted = freshTask.points_awarded;
+              db.prepare('UPDATE users SET streak_points = MAX(0, streak_points - ?) WHERE id = ?').run(
+                reverted,
+                auth.user.id
+              );
+            }
+            db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(taskId, auth.user.id);
+            return reverted;
+          });
+
+          return sendJson(res, 200, { ok: true, deletedId: taskId, revertedPoints });
         }
 
         if (method === 'POST' && subAction === 'notification') {
@@ -634,7 +1145,7 @@ export function createAppServer(options = {}) {
       if (method === 'PUT' && pathname === '/api/streak/theme') {
         if (!requireRole(auth, res, 'student')) return;
         const body = await parseJsonBody(req);
-        const result = selectStreakTheme(db, auth.user.id, String(body.themeId || ''));
+        const result = selectStreakTheme(db, auth.user.id, cleanControlChars(body.themeId));
         if (!result.ok) {
           return sendJson(res, result.status, { error: result.error, missingDays: result.missingDays });
         }
@@ -664,47 +1175,59 @@ export function createAppServer(options = {}) {
 
       if (method === 'POST' && pathname === '/api/assistant/messages') {
         if (!requireRole(auth, res, 'student')) return;
+        if (!checkRate(res, `assistant:${auth.user.id}`, 30, 60_000)) return;
+
         const body = await parseJsonBody(req);
-        const content = String(body.content || '').trim();
+        const content = cleanControlChars(body.content, { multiline: true });
         if (!content) {
           return sendJson(res, 400, { error: 'Escribe un mensaje para el asistente.' });
         }
-
-        const nowIso = new Date().toISOString();
-        const userMsgId = db
-          .prepare(
-            "INSERT INTO assistant_messages (user_id, sender, content, created_at) VALUES (?, 'user', ?, ?)"
-          )
-          .run(auth.user.id, content, nowIso).lastInsertRowid;
+        if (content.length > 1500) {
+          return sendJson(res, 400, { error: 'La consulta al asistente no puede exceder 1500 caracteres.' });
+        }
 
         const replyText = await generateAssistantReply(db, auth.user, content, tz);
-        const replyIso = new Date().toISOString();
-        const botMsgId = db
-          .prepare(
-            "INSERT INTO assistant_messages (user_id, sender, content, created_at) VALUES (?, 'assistant', ?, ?)"
-          )
-          .run(auth.user.id, replyText, replyIso).lastInsertRowid;
+        const { userMessage, assistantMessage } = withTransaction(db, () => {
+          const nowIso = new Date().toISOString();
+          const userMsgId = db
+            .prepare(
+              "INSERT INTO assistant_messages (user_id, sender, content, created_at) VALUES (?, 'user', ?, ?)"
+            )
+            .run(auth.user.id, content, nowIso).lastInsertRowid;
 
-        const userMessage = db.prepare('SELECT * FROM assistant_messages WHERE id = ?').get(Number(userMsgId));
-        const assistantMessage = db.prepare('SELECT * FROM assistant_messages WHERE id = ?').get(Number(botMsgId));
+          const replyIso = new Date().toISOString();
+          const botMsgId = db
+            .prepare(
+              "INSERT INTO assistant_messages (user_id, sender, content, created_at) VALUES (?, 'assistant', ?, ?)"
+            )
+            .run(auth.user.id, replyText, replyIso).lastInsertRowid;
+
+          return {
+            userMessage: db.prepare('SELECT * FROM assistant_messages WHERE id = ?').get(Number(userMsgId)),
+            assistantMessage: db.prepare('SELECT * FROM assistant_messages WHERE id = ?').get(Number(botMsgId))
+          };
+        });
+
         return sendJson(res, 201, { userMessage, assistantMessage });
       }
 
       if (method === 'DELETE' && pathname === '/api/assistant/messages') {
         if (!requireRole(auth, res, 'student')) return;
-        db.prepare('DELETE FROM assistant_messages WHERE user_id = ?').run(auth.user.id);
-        const nowIso = new Date().toISOString();
-        const id = db
-          .prepare(
-            "INSERT INTO assistant_messages (user_id, sender, content, created_at) VALUES (?, 'assistant', ?, ?)"
-          )
-          .run(auth.user.id, ASSISTANT_WELCOME, nowIso).lastInsertRowid;
-        const welcome = db.prepare('SELECT * FROM assistant_messages WHERE id = ?').get(Number(id));
+        const welcome = withTransaction(db, () => {
+          db.prepare('DELETE FROM assistant_messages WHERE user_id = ?').run(auth.user.id);
+          const nowIso = new Date().toISOString();
+          const id = db
+            .prepare(
+              "INSERT INTO assistant_messages (user_id, sender, content, created_at) VALUES (?, 'assistant', ?, ?)"
+            )
+            .run(auth.user.id, ASSISTANT_WELCOME, nowIso).lastInsertRowid;
+          return db.prepare('SELECT * FROM assistant_messages WHERE id = ?').get(Number(id));
+        });
         return sendJson(res, 200, { ok: true, messages: [welcome] });
       }
 
       // ------------------------------------------------------------------
-      // Portal Docente de Exclusiva Consulta (HU-43..HU-46)
+      // Portal Docente de Exclusiva Consulta con Aislamiento por Grupo (HU-43..HU-46)
       // ------------------------------------------------------------------
       if (method === 'GET' && pathname === '/api/teacher/groups') {
         if (!requireRole(auth, res, 'teacher')) return;
@@ -717,10 +1240,13 @@ export function createAppServer(options = {}) {
              FROM groups g
              LEFT JOIN users u ON u.group_id = g.id AND u.role = 'student'
              LEFT JOIN tasks t ON t.user_id = u.id
+             WHERE EXISTS (
+               SELECT 1 FROM subjects s WHERE s.group_id = g.id AND s.teacher_id = ?
+             )
              GROUP BY g.id
              ORDER BY g.name ASC`
           )
-          .all()
+          .all(auth.user.id)
           .map((g) => ({
             ...g,
             completedTasks: g.completedTasks || 0,
@@ -733,6 +1259,11 @@ export function createAppServer(options = {}) {
       if (method === 'GET' && teacherGroupMatch) {
         if (!requireRole(auth, res, 'teacher')) return;
         const groupId = Number(teacherGroupMatch[1]);
+        if (!teacherTeachesGroup(db, auth.user.id, groupId)) {
+          return sendJson(res, 403, {
+            error: 'Acceso restringido: solo puedes supervisar grupos donde impartes asignaturas.'
+          });
+        }
         const students = db
           .prepare(
             `SELECT u.id, u.name, u.email, u.streak_days AS streakDays, u.streak_points AS streakPoints,
@@ -759,7 +1290,8 @@ export function createAppServer(options = {}) {
         const studentId = Number(teacherStudentTasksMatch[1]);
         const student = db
           .prepare(
-            `SELECT u.id, u.name, u.email, u.streak_days AS streakDays, u.streak_points AS streakPoints, g.name AS groupName
+            `SELECT u.id, u.name, u.email, u.group_id AS groupId, u.streak_days AS streakDays,
+                    u.streak_points AS streakPoints, g.name AS groupName
              FROM users u
              LEFT JOIN groups g ON g.id = u.group_id
              WHERE u.id = ? AND u.role = 'student'`
@@ -768,8 +1300,15 @@ export function createAppServer(options = {}) {
         if (!student) {
           return sendJson(res, 404, { error: 'Estudiante no encontrado.' });
         }
+        if (!teacherTeachesGroup(db, auth.user.id, student.groupId)) {
+          return sendJson(res, 403, {
+            error: 'Acceso restringido: este estudiante pertenece a un grupo donde no tienes carga académica asignada.'
+          });
+        }
         const tasks = db
-          .prepare('SELECT id, subject_name, subject_color, title, description, due_at, priority, completed, completed_at FROM tasks WHERE user_id = ? ORDER BY completed ASC, due_at ASC')
+          .prepare(
+            'SELECT id, subject_name, subject_color, title, description, due_at, priority, completed, completed_at FROM tasks WHERE user_id = ? ORDER BY completed ASC, due_at ASC'
+          )
           .all(studentId);
         return sendJson(res, 200, { student, tasks, readOnly: true });
       }
@@ -793,23 +1332,34 @@ export function createAppServer(options = {}) {
       if (method === 'POST' && pathname === '/api/teacher/subjects') {
         if (!requireRole(auth, res, 'teacher')) return;
         const body = await parseJsonBody(req);
-        const code = String(body.code || '').trim().toUpperCase();
-        const name = String(body.name || '').trim();
-        const color = String(body.color || '#4f46e5').trim();
-        const weeklyHours = Math.max(1, Math.min(20, Number(body.weeklyHours || 4)));
+        const code = cleanControlChars(body.code).toUpperCase();
+        const name = cleanControlChars(body.name);
+        const color = cleanControlChars(body.color || '#4f46e5');
+        const rawHours = Number(body.weeklyHours ?? 4);
+        const weeklyHours = Number.isFinite(rawHours) ? Math.max(1, Math.min(20, Math.round(rawHours))) : 4;
         const groupId = Number(body.groupId);
 
-        if (!code || !name || !groupId) {
-          return sendJson(res, 400, { error: 'Clave, nombre de materia y grupo son obligatorios.' });
+        if (!code || code.length < 2 || code.length > 30 || !name || name.length < 2 || name.length > 120 || !groupId) {
+          return sendJson(res, 400, { error: 'Clave (2-30), nombre de materia (2-120) y grupo son obligatorios.' });
+        }
+        if (!isValidHexColor(color)) {
+          return sendJson(res, 400, { error: 'Color inválido (usa formato hexadecimal #RRGGBB).' });
         }
         const grp = db.prepare('SELECT id FROM groups WHERE id = ?').get(groupId);
         if (!grp) return sendJson(res, 400, { error: 'Grupo inválido.' });
+
+        const dup = db
+          .prepare('SELECT id FROM subjects WHERE upper(code) = ? AND group_id = ?')
+          .get(code, groupId);
+        if (dup) {
+          return sendJson(res, 409, { error: 'Ya existe una asignatura con esa clave en el grupo seleccionado.' });
+        }
 
         const id = db
           .prepare(
             'INSERT INTO subjects (code, name, color, weekly_hours, group_id, teacher_id) VALUES (?, ?, ?, ?, ?, ?)'
           )
-          .run(code, name, color, weeklyHours, groupId, auth.user.id).lastInsertRowid;
+          .run(code, name, color.toLowerCase(), weeklyHours, groupId, auth.user.id).lastInsertRowid;
 
         const subject = db
           .prepare(
@@ -845,16 +1395,52 @@ export function createAppServer(options = {}) {
         const body = await parseJsonBody(req);
         const subjectId = Number(body.subjectId);
         const dayOfWeek = Number(body.dayOfWeek);
-        const startTime = String(body.startTime || '').trim();
-        const endTime = String(body.endTime || '').trim();
-        const classroom = String(body.classroom || '').trim();
-        const building = String(body.building || '').trim();
+        const startTime = cleanControlChars(body.startTime);
+        const endTime = cleanControlChars(body.endTime);
+        const classroom = cleanControlChars(body.classroom);
+        const building = cleanControlChars(body.building);
 
-        if (!subjectId || dayOfWeek < 1 || dayOfWeek > 5 || !startTime || !endTime || !classroom || !building) {
-          return sendJson(res, 400, { error: 'Todos los datos del bloque de horario son obligatorios (Lunes a Viernes).' });
+        if (
+          !subjectId ||
+          !Number.isInteger(dayOfWeek) ||
+          dayOfWeek < 1 ||
+          dayOfWeek > 5 ||
+          !classroom ||
+          classroom.length > 80 ||
+          !building ||
+          building.length > 120
+        ) {
+          return sendJson(res, 400, {
+            error: 'Todos los datos del bloque de horario son obligatorios (Lunes a Viernes).'
+          });
         }
-        const sub = db.prepare('SELECT id FROM subjects WHERE id = ? AND teacher_id = ?').get(subjectId, auth.user.id);
+        if (!isValidTime24h(startTime) || !isValidTime24h(endTime) || startTime >= endTime) {
+          return sendJson(res, 400, {
+            error: 'El horario debe tener formato HH:MM válido y la hora de inicio debe ser menor a la hora de término.'
+          });
+        }
+
+        const sub = db
+          .prepare('SELECT id FROM subjects WHERE id = ? AND teacher_id = ?')
+          .get(subjectId, auth.user.id);
         if (!sub) return sendJson(res, 404, { error: 'Materia no encontrada para este docente.' });
+
+        // Prevención de traslapes horarios para el mismo docente en el mismo día
+        const teacherOverlap = db
+          .prepare(
+            `SELECT sc.id, s.name AS subjectName, sc.start_time AS startTime, sc.end_time AS endTime
+             FROM schedules sc
+             JOIN subjects s ON s.id = sc.subject_id
+             WHERE s.teacher_id = ? AND sc.day_of_week = ? AND sc.start_time < ? AND sc.end_time > ?
+             LIMIT 1`
+          )
+          .get(auth.user.id, dayOfWeek, endTime, startTime);
+
+        if (teacherOverlap) {
+          return sendJson(res, 409, {
+            error: `Colisión de horario: se traslapa con "${teacherOverlap.subjectName}" (${teacherOverlap.startTime}–${teacherOverlap.endTime}).`
+          });
+        }
 
         const id = db
           .prepare(
@@ -876,7 +1462,7 @@ export function createAppServer(options = {}) {
       }
 
       // ------------------------------------------------------------------
-      // Mensajería Privada Texto Plano (HU-47..HU-50)
+      // Mensajería Privada Texto Plano Cifrada en Reposo AES-256-GCM (HU-47..HU-50)
       // ------------------------------------------------------------------
       if (method === 'GET' && pathname === '/api/messages/unread-count') {
         return sendJson(res, 200, { unreadMessages: getUnreadMessagesCount(db, auth.user.id) });
@@ -890,7 +1476,7 @@ export function createAppServer(options = {}) {
               `SELECT DISTINCT u.id, u.name, u.email, u.role,
                       GROUP_CONCAT(DISTINCT s.name) AS subjectsLabel
                FROM users u
-               LEFT JOIN subjects s ON s.teacher_id = u.id AND s.group_id = ?
+               JOIN subjects s ON s.teacher_id = u.id AND s.group_id = ?
                WHERE u.role = 'teacher'
                GROUP BY u.id
                ORDER BY u.name ASC`
@@ -901,11 +1487,14 @@ export function createAppServer(options = {}) {
             .prepare(
               `SELECT DISTINCT u.id, u.name, u.email, u.role, g.name AS groupName
                FROM users u
-               LEFT JOIN groups g ON g.id = u.group_id
+               JOIN groups g ON g.id = u.group_id
                WHERE u.role = 'student'
+                 AND EXISTS (
+                   SELECT 1 FROM subjects s WHERE s.group_id = u.group_id AND s.teacher_id = ?
+                 )
                ORDER BY g.name ASC, u.name ASC`
             )
-            .all();
+            .all(auth.user.id);
         }
 
         const enriched = contacts.map((c) => {
@@ -924,7 +1513,7 @@ export function createAppServer(options = {}) {
           return {
             ...c,
             unreadCount: unread,
-            lastMessage: lastMsg ? lastMsg.content : null,
+            lastMessage: lastMsg ? decryptMessageContent(db, lastMsg.content) : null,
             lastMessageAt: lastMsg ? lastMsg.created_at : null
           };
         });
@@ -937,13 +1526,21 @@ export function createAppServer(options = {}) {
         const contactId = Number(chatContactMatch[1]);
         const contact = db
           .prepare(
-            `SELECT u.id, u.name, u.email, u.role, g.name AS groupName
+            `SELECT u.id, u.name, u.email, u.role, u.group_id AS groupId, g.name AS groupName
              FROM users u LEFT JOIN groups g ON g.id = u.group_id WHERE u.id = ?`
           )
           .get(contactId);
 
         if (!contact || contact.role === auth.user.role) {
           return sendJson(res, 404, { error: 'Contacto académico no disponible para chat privado.' });
+        }
+
+        const teacherId = auth.user.role === 'teacher' ? auth.user.id : contact.id;
+        const studentGroupId = auth.user.role === 'student' ? auth.user.groupId : contact.groupId;
+        if (!teacherTeachesGroup(db, teacherId, studentGroupId)) {
+          return sendJson(res, 403, {
+            error: 'El chat privado está restringido a docentes y estudiantes que comparten grupo académico.'
+          });
         }
 
         if (method === 'GET') {
@@ -954,7 +1551,7 @@ export function createAppServer(options = {}) {
           const unreadMessages = getUnreadMessagesCount(db, auth.user.id);
           sseHub.emitToUser(auth.user.id, 'unread_update', { unreadMessages });
 
-          const messages = db
+          const rows = db
             .prepare(
               `SELECT id, sender_id AS senderId, receiver_id AS receiverId, content, is_read AS isRead, created_at AS createdAt
                FROM private_messages
@@ -963,10 +1560,17 @@ export function createAppServer(options = {}) {
             )
             .all(auth.user.id, contactId, contactId, auth.user.id);
 
+          const messages = rows.map((m) => ({
+            ...m,
+            content: decryptMessageContent(db, m.content)
+          }));
+
           return sendJson(res, 200, { contact, messages, unreadMessages });
         }
 
         if (method === 'POST') {
+          if (!checkRate(res, `chat:${auth.user.id}`, 30, 60_000)) return;
+
           const body = await parseJsonBody(req);
           for (const key of FORBIDDEN_CHAT_KEYS) {
             if (body[key] !== undefined && body[key] !== null && body[key] !== '') {
@@ -976,7 +1580,8 @@ export function createAppServer(options = {}) {
             }
           }
 
-          const content = typeof body.content === 'string' ? body.content.trim() : '';
+          const content =
+            typeof body.content === 'string' ? cleanControlChars(body.content, { multiline: true }) : '';
           if (!content) {
             return sendJson(res, 400, { error: 'Escribe un mensaje de texto antes de enviar.' });
           }
@@ -985,17 +1590,23 @@ export function createAppServer(options = {}) {
           }
 
           const nowIso = new Date().toISOString();
+          const encryptedContent = db.vault ? db.vault.encrypt(content) : content;
           const msgId = db
             .prepare(
               'INSERT INTO private_messages (sender_id, receiver_id, content, is_read, created_at) VALUES (?, ?, ?, 0, ?)'
             )
-            .run(auth.user.id, contactId, content, nowIso).lastInsertRowid;
+            .run(auth.user.id, contactId, encryptedContent, nowIso).lastInsertRowid;
 
-          const message = db
+          const storedRow = db
             .prepare(
               'SELECT id, sender_id AS senderId, receiver_id AS receiverId, content, is_read AS isRead, created_at AS createdAt FROM private_messages WHERE id = ?'
             )
             .get(Number(msgId));
+
+          const message = {
+            ...storedRow,
+            content: decryptMessageContent(db, storedRow.content)
+          };
 
           const receiverUnread = getUnreadMessagesCount(db, contactId);
           sseHub.emitToUser(contactId, 'private_message', {
@@ -1012,7 +1623,9 @@ export function createAppServer(options = {}) {
       return sendJson(res, 404, { error: 'Ruta de API no encontrada.' });
     } catch (err) {
       const status = err.status || 500;
-      return sendJson(res, status, { error: err.message || 'Error interno del servidor.' });
+      const safeMessage =
+        status >= 500 ? 'Error interno del servidor al procesar la solicitud.' : err.message;
+      return sendJson(res, status, { error: safeMessage });
     }
   });
 
@@ -1033,6 +1646,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const port = Number(process.env.PORT || 3000);
   const { server } = createAppServer();
   server.listen(port, () => {
-    console.log(`Plataforma Web Académica UPFIM ejecutándose en http://localhost:${port}`);
+    console.log(`Plataforma Web Académica UPFIM (SQLite 3 Blindado) ejecutándose en http://localhost:${port}`);
   });
 }

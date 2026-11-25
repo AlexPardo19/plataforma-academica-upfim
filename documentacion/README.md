@@ -14,6 +14,7 @@
 | **3. Arquitectura y Manual Técnico** | **[PENDIENTE]** | — | Pendiente de redactar (el modelo de datos SQLite, endpoints REST y SSE ya están implementados en `server/`). |
 | **4. Manual de Usuario (Estudiante y Docente)** | **[PENDIENTE]** | — | Pendiente de redactar (el tutorial interactivo emergente dentro de la app ya cubre el onboarding). |
 | **5. Reporte de Sprints, PERT/CPM y Pruebas QA** | **[PENDIENTE]** | — | Pendiente de redactar (suite automatizada ya operativa con `npm test`). |
+| **6. Auditoría de Mejoras y Blindado de Datos SQLite 3** | **[COMPLETADO]** | [blindado-y-mejoras.md](./blindado-y-mejoras.md) | Diagnóstico de 12 vulnerabilidades/mejoras, cifrado `AES-256-GCM`, sesiones `SHA-256`, bitácora inmutable y respaldos `VACUUM INTO`. |
 
 ---
 

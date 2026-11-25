@@ -1,8 +1,10 @@
 import { showToast } from './notifications.js';
 
 const STORAGE_KEY = 'upfim_pomodoro_state';
+const RING_CIRCUMFERENCE = 2 * Math.PI * 52; // r = 52 -> ~326.72
 
 const displayEl = document.getElementById('timer-display');
+const ringProgressEl = document.getElementById('timer-ring-progress');
 const taskLabelEl = document.getElementById('timer-task-label');
 const startBtn = document.getElementById('timer-start-btn');
 const pauseBtn = document.getElementById('timer-pause-btn');
@@ -43,14 +45,21 @@ function loadState() {
 }
 
 function renderTimer() {
-  const currentMs = state.running && state.targetEndMs
-    ? Math.max(0, state.targetEndMs - Date.now())
-    : state.remainingMs;
+  const currentMs =
+    state.running && state.targetEndMs
+      ? Math.max(0, state.targetEndMs - Date.now())
+      : state.remainingMs;
 
   const totalSec = Math.ceil(currentMs / 1000);
   const mins = String(Math.floor(totalSec / 60)).padStart(2, '0');
   const secs = String(totalSec % 60).padStart(2, '0');
   displayEl.textContent = `${mins}:${secs}`;
+
+  if (ringProgressEl) {
+    const ratio = state.durationMs > 0 ? Math.min(1, Math.max(0, currentMs / state.durationMs)) : 1;
+    const offset = RING_CIRCUMFERENCE * (1 - ratio);
+    ringProgressEl.style.strokeDashoffset = String(offset.toFixed(2));
+  }
 
   taskLabelEl.textContent = state.taskTitle
     ? `Enfocado en: ${state.taskTitle}`
@@ -77,11 +86,12 @@ function tick() {
     saveState();
     renderTimer();
     showToast({
-      title: '⏱️ Bloque de concentración completado',
+      title: 'Bloque de concentración completado',
       body: state.taskTitle
-        ? `Terminaste tu sesión de enfoque en "${state.taskTitle}". ¡Toma un breve descanso!`
+        ? `Terminaste tu sesión de enfoque en "${state.taskTitle}". Toma un breve descanso.`
         : 'Finalizó tu temporizador de estudio.',
       variant: 'success',
+      icon: 'clock',
       autoCloseMs: 10000
     });
     return;
